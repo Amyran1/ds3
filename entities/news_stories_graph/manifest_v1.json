@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "built_at": "2026-04-13T22:43:25.462309+00:00",
+  "entity": "civic_shout_news_environment/news_stories_graph",
+  "bucket": "chorus-content-assets",
+  "prefix": "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph",
+  "total_bytes": 50838075793,
+  "n_artifacts": 11,
+  "artifacts": [
+    {
+      "key": "bipartite_edges/bipartite_edges_v1.parquet",
+      "s3_key": "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph/bipartite_edges/bipartite_edges_v1.parquet",
+      "size_bytes": 751652335,
+      "last_modified": "2026-04-13T16:38:43+00:00",
+      "size_in_band": true
+    },
+    {
+      "key": "dense_embeddings/embeddings_v1.npy",
+      "s3_key": "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph/dense_embeddings/embeddings_v1.npy",
+      "size_bytes": 21615814784,
+      "last_modified": "2026-04-13T18:23:37+00:00",
+      "size_in_band": true
+    },
+    {
+      "key": "dense_embeddings/story_ids_v1.json",
+      "s3_key": "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph/dense_embeddings/story_ids_v1.json",
+      "size_bytes": 126655164,
+      "last_modified": "2026-04-13T18:54:15+00:00",
+      "size_in_band": true
+    },
+    {
+      "key": "dense_faiss_index/dense_faiss_index_v1.faiss",
+      "s3_key": "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph/dense_faiss_index/dense_faiss_index_v1.faiss",
+      "size_bytes": 21656559683,
+      "last_modified": "2026-04-13T18:27:47+00:00",
+      "size_in_band": true
+    },
+    {
+      "key": "dense_edges/dense_edges_v1.parquet",
+      "s3_key": "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph/dense_edges/dense_edges_v1.parquet",
+      "size_bytes": 3624819929,
+      "last_modified": "2026-04-13T22:18:35+00:00",
+      "size_in_band": true
+    },
+    {
+      "key": "sparse_tfidf/tfidf_v1.npz",
+      "s3_key": "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph/sparse_tfidf/tfidf_v1.npz",
+      "size_bytes": 2224366019,
+      "last_modified": "2026-04-13T18:41:14+00:00",
+      "size_in_band": true
+    },
+    {
+      "key": "sparse_tfidf/vocab_v1.txt",
+      "s3_key": "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph/sparse_tfidf/vocab_v1.txt",
+      "size_bytes": 574544,
+      "last_modified": "2026-04-13T18:49:48+00:00",
+      "size_in_band": true
+    },
+    {
+      "key": "sparse_tfidf/story_ids_v1.json",
+      "s3_key": "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph/sparse_tfidf/story_ids_v1.json",
+      "size_bytes": 126655164,
+      "last_modified": "2026-04-13T18:49:50+00:00",
+      "size_in_band": true
+    },
+    {
+      "key": "bm25_vectors/bm25_v1.npz",
+      "s3_key": "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph/bm25_vectors/bm25_v1.npz",
+      "size_bytes": 584322767,
+      "last_modified": "2026-04-13T19:38:37+00:00",
+      "size_in_band": true
+    },
+    {
+      "key": "bm25_vectors/params_v1.json",
+      "s3_key": "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph/bm25_vectors/params_v1.json",
+      "size_bytes": 240,
+      "last_modified": "2026-04-13T19:39:09+00:00",
+      "size_in_band": true
+    },
+    {
+      "key": "bm25_vectors/story_ids_v1.json",
+      "s3_key": "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph/bm25_vectors/story_ids_v1.json",
+      "size_bytes": 126655164,
+      "last_modified": "2026-04-13T19:39:10+00:00",
+      "size_in_band": true
+    }
+  ],
+  "all_present": true,
+  "all_in_band": true
+}

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>aggregate_emails v4 — embedding A/B</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 1100px; margin: 2em auto; color: #222; }
+h1 { border-bottom: 2px solid #333; padding-bottom: 0.3em; }
+table { border-collapse: collapse; margin: 1em 0; }
+th, td { border: 1px solid #ccc; padding: 6px 12px; text-align: right; }
+th { background: #f0f0f0; text-align: left; }
+.signal-LIFT-LIKELY { background: #d4edda; color: #155724; padding: 0.5em 1em; border-radius: 4px; font-weight: bold; }
+.signal-MARGINAL { background: #fff3cd; color: #856404; padding: 0.5em 1em; border-radius: 4px; font-weight: bold; }
+.signal-DROP-LARGE { background: #f8d7da; color: #721c24; padding: 0.5em 1em; border-radius: 4px; font-weight: bold; }
+canvas { border: 1px solid #ddd; margin: 1em 0; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+<h1>aggregate_emails v4 — text-embedding-3-small vs -large</h1>
+<p><strong>Hypothesis</strong>: -large (3072-d) produces more dispersed pairwise
+cosines than -small (1536-d), opening more discriminative range for downstream
+contrastive features. If distributions overlap heavily AND top-k neighborhoods
+agree highly, harness lift is unlikely.</p>
+
+<h2>Decision signal: <span class="signal-DROP-LARGE">DROP-LARGE</span></h2>
+<p>Spread ratio (std-large / std-small): <strong>0.823</strong>.
+Top-1 nearest-neighbor agreement: <strong>0.735</strong>.
+Top-5 overlap mean: <strong>0.732</strong>.</p>
+<ul>
+<li><strong>LIFT-LIKELY</strong> = spread &gt; 5% wider AND top-1 agreement &lt; 80% (-large finds different neighborhoods)</li>
+<li><strong>MARGINAL</strong> = spread within ±5% (similar discriminability)</li>
+<li><strong>DROP-LARGE</strong> = spread narrower (fewer features, more cost) — abort A/B</li>
+</ul>
+
+<h2>1. Random-pair cosine distribution</h2>
+<table>
+<tr><th>Metric</th><th>-small (1536-d)</th><th>-large (3072-d)</th></tr>
+<tr><td>mean</td><td>0.4679</td><td>0.5225</td></tr>
+<tr><td>std</td><td>0.0784</td><td>0.0645</td></tr>
+<tr><td>min</td><td>0.2082</td><td>0.2877</td></tr>
+<tr><td>p99</td><td>0.6766</td><td>0.6996</td></tr>
+</table>
+<canvas id="randomPairChart" width="1000" height="350"></canvas>
+
+<h2>2. Top-1 nearest-neighbor cosine strength</h2>
+<table>
+<tr><th>Metric</th><th>-small</th><th>-large</th></tr>
+<tr><td>mean</td><td>0.8832</td><td>0.8952</td></tr>
+<tr><td>std</td><td>0.1280</td><td>0.1153</td></tr>
+</table>
+<canvas id="top1Chart" width="1000" height="350"></canvas>
+
+<h2>3. Top-k neighborhood agreement</h2>
+<p>200 anchor emails × 1000 candidate emails.</p>
+<table>
+<tr><th>Metric</th><th>Value</th></tr>
+<tr><td>Top-1 agreement</td><td>0.7350</td></tr>
+<tr><td>Top-5 overlap mean</td><td>0.7320</td></tr>
+</table>
+<p>If top-1 agreement is high (&gt; 0.9), -large doesn't find materially different
+neighborhoods than -small. Downstream feature rebuilds will likely produce
+near-identical scores; harness lift unlikely.</p>
+
+<h2>4. Implications for downstream feature rebuilds</h2>
+<ul>
+<li>If <strong>LIFT-LIKELY</strong>: clone the 3 champion dense feature families to
+<code>_large</code> siblings, run a 10pct A/B against run_12 (r83 +1.928pp). One day
+of work + ~$0 marginal cost (v4 already embedded).</li>
+<li>If <strong>MARGINAL</strong>: -large likely won't move the within-user rank metric
+even if mean cosine drifts. Stop here and pivot to outcome-side audit.</li>
+<li>If <strong>DROP-LARGE</strong>: -small actually has more spread on this corpus
+(unusual, but possible — short templated email content). Abort.</li>
+</ul>
+
+<script>
+const cosSmallX = [0.21616551280021667, 0.23200055956840515, 0.24783557653427124, 0.2636706233024597, 0.2795056700706482, 0.29534071683883667, 0.31117576360702515, 0.32701078057289124, 0.3428458273410797, 0.3586808443069458, 0.3745158910751343, 0.39035093784332275, 0.40618598461151123, 0.4220210313796997, 0.4378560781478882, 0.4536910951137543, 0.46952614188194275, 0.4853611886501312, 0.5011962056159973, 0.5170312523841858, 0.5328662991523743, 0.548701286315918, 0.5645363330841064, 0.5803713798522949, 0.5962064266204834, 0.6120414733886719, 0.6278765201568604, 0.6437115669250488, 0.6595466136932373, 0.6753816604614258, 0.6912167072296143, 0.7070517539978027, 0.7228868007659912, 0.7387218475341797, 0.7545568943023682, 0.7703919410705566, 0.7862269282341003, 0.802061915397644, 0.8178969621658325, 0.833732008934021, 0.8495670557022095, 0.865402102470398, 0.8812371492385864, 0.8970721960067749, 0.9129072427749634, 0.9287422895431519, 0.9445773363113403, 0.9604123830795288, 0.9762474298477173, 0.9920824766159058];
+const cosSmallY = [1, 2, 3, 6, 7, 22, 32, 62, 103, 158, 201, 296, 332, 374, 448, 427, 444, 378, 382, 289, 252, 172, 147, 128, 82, 65, 64, 33, 26, 22, 11, 7, 3, 7, 3, 1, 1, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 5];
+const cosLargeX = [0.29485267400741577, 0.3090980648994446, 0.3233434557914734, 0.3375888466835022, 0.3518342673778534, 0.3660796582698822, 0.380325049161911, 0.3945704698562622, 0.408815860748291, 0.4230612516403198, 0.43730664253234863, 0.45155203342437744, 0.46579742431640625, 0.48004281520843506, 0.49428823590278625, 0.5085336565971375, 0.5227790474891663, 0.5370244383811951, 0.5512698292732239, 0.5655152201652527, 0.5797606110572815, 0.5940060019493103, 0.6082513928413391, 0.6224967837333679, 0.6367421746253967, 0.6509875655174255, 0.6652329564094543, 0.6794783473014832, 0.693723738193512, 0.7079691886901855, 0.7222145795822144, 0.7364599704742432, 0.750705361366272, 0.7649507522583008, 0.7791961431503296, 0.7934415340423584, 0.8076869249343872, 0.821932315826416, 0.8361777663230896, 0.8504231572151184, 0.8646685481071472, 0.878913938999176, 0.8931593298912048, 0.9074047207832336, 0.9216501116752625, 0.9358955025672913, 0.9501408934593201, 0.9643862843513489, 0.9786317348480225, 0.9928771257400513];
+const cosLargeY = [1, 2, 3, 5, 10, 11, 24, 40, 80, 117, 157, 242, 335, 414, 458, 522, 467, 450, 401, 294, 265, 208, 131, 111, 73, 51, 38, 23, 20, 10, 12, 6, 3, 2, 4, 1, 2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 5];
+new Chart(document.getElementById('randomPairChart').getContext('2d'), {
+  type: 'line',
+  data: {
+    datasets: [
+      { label: '-small', data: cosSmallX.map((x, i) => ({x: x, y: cosSmallY[i]})), borderColor: 'blue', fill: false, pointRadius: 0 },
+      { label: '-large', data: cosLargeX.map((x, i) => ({x: x, y: cosLargeY[i]})), borderColor: 'red', fill: false, pointRadius: 0 }
+    ]
+  },
+  options: { scales: { x: { type: 'linear', title: {display: true, text: 'cosine'} }, y: { title: {display: true, text: 'count'} } } }
+});
+
+const t1SmallX = [0.5477913618087769, 0.5569269061088562, 0.5660624504089355, 0.5751980543136597, 0.584333598613739, 0.5934691429138184, 0.6026047468185425, 0.6117402911186218, 0.6208758354187012, 0.6300114393234253, 0.6391469836235046, 0.648282527923584, 0.6574181318283081, 0.6665536761283875, 0.6756892204284668, 0.6848248243331909, 0.6939603686332703, 0.7030959129333496, 0.7122315168380737, 0.7213670611381531, 0.7305026054382324, 0.7396382093429565, 0.7487737536430359, 0.7579092979431152, 0.7670449018478394, 0.7761804461479187, 0.785315990447998, 0.7944515943527222, 0.8035871386528015, 0.8127227425575256, 0.821858286857605, 0.8309938311576843, 0.8401294350624084, 0.8492649793624878, 0.8584005236625671, 0.8675361275672913, 0.8766716718673706, 0.88580721616745, 0.8949428200721741, 0.9040783643722534, 0.9132139682769775, 0.9223495125770569, 0.9314850568771362, 0.9406206607818604, 0.9497562050819397, 0.958891749382019, 0.9680273532867432, 0.9771628975868225, 0.9862984418869019, 0.995434045791626];
+const t1SmallY = [1, 0, 0, 0, 0, 0, 1, 1, 0, 2, 1, 3, 2, 0, 1, 3, 3, 4, 4, 3, 1, 3, 10, 6, 5, 7, 3, 2, 3, 3, 2, 5, 0, 2, 3, 4, 5, 1, 3, 0, 1, 1, 0, 1, 0, 1, 0, 1, 4, 94];
+const t1LargeX = [0.6222690939903259, 0.6299000978469849, 0.637531042098999, 0.6451619863510132, 0.6527929306030273, 0.6604239344596863, 0.6680548787117004, 0.6756858825683594, 0.6833168268203735, 0.6909477710723877, 0.6985787749290466, 0.7062097191810608, 0.7138407230377197, 0.7214716672897339, 0.729102611541748, 0.7367335557937622, 0.7443645596504211, 0.7519955039024353, 0.7596265077590942, 0.7672574520111084, 0.7748883962631226, 0.7825194001197815, 0.7901503443717957, 0.7977812886238098, 0.8054122924804688, 0.8130432367324829, 0.8206741809844971, 0.828305184841156, 0.8359361290931702, 0.8435671329498291, 0.8511980772018433, 0.8588290214538574, 0.8664600253105164, 0.8740909695625305, 0.8817219138145447, 0.8893529176712036, 0.8969838619232178, 0.9046148657798767, 0.9122458100318909, 0.919876754283905, 0.9275076985359192, 0.9351387023925781, 0.9427696466445923, 0.9504006505012512, 0.9580315947532654, 0.9656625390052795, 0.9732935428619385, 0.9809244871139526, 0.9885554313659668, 0.9961864352226257];
+const t1LargeY = [2, 0, 0, 1, 1, 0, 0, 2, 0, 0, 4, 5, 2, 0, 2, 2, 8, 8, 2, 6, 5, 3, 2, 4, 1, 3, 2, 1, 5, 3, 0, 3, 3, 1, 3, 5, 5, 1, 0, 0, 2, 3, 0, 0, 1, 1, 0, 3, 5, 90];
+new Chart(document.getElementById('top1Chart').getContext('2d'), {
+  type: 'line',
+  data: {
+    datasets: [
+      { label: '-small', data: t1SmallX.map((x, i) => ({x: x, y: t1SmallY[i]})), borderColor: 'blue', fill: false, pointRadius: 0 },
+      { label: '-large', data: t1LargeX.map((x, i) => ({x: x, y: t1LargeY[i]})), borderColor: 'red', fill: false, pointRadius: 0 }
+    ]
+  },
+  options: { scales: { x: { type: 'linear', title: {display: true, text: 'top-1 cosine'} }, y: { title: {display: true, text: 'count'} } } }
+});
+</script>
+</body></html>

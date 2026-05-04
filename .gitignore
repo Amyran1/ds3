@@ -1,0 +1,26 @@
+.claude/
+CLAUDE.md
+.cursor/
+.env
+__pycache__/
+*.egg-info/
+tmp/
+.venv/
+.DS_Store
+.cache/
+data/raw/
+data/entities/
+.costs/
+
+# Civic Shout routing: local feature caches and materialized parquets (large; regenerate)
+projects/civic_shout_actions_routing/**/cache/
+projects/civic_shout_actions_routing/features/*.parquet
+projects/civic_shout_actions_routing_2/**/cache/
+projects/civic_shout_actions_routing_2/**/__pycache__/
+
+# DS v2 run/feature parquet artifacts (mirrored to S3 via cache modules; regenerate locally)
+projects_v2/**/runs/**/*.parquet
+projects_v2/**/features/**/*.parquet
+
+# Oversized / mis-generated EDA artifact (do not commit multi-GB HTML)
+projects_v2/civic_shout_content_routing/features/recency_decayed_contrastive_per_channel_v1/eda.html
