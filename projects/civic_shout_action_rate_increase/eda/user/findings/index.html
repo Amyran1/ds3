@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>User-EDA findings — civic_shout_action_rate_increase</title>
+<style>
+
+:root {
+  --bg: #fafaf8;
+  --fg: #1a1a1a;
+  --muted: #666;
+  --accent: #2956a3;
+  --warn: #c5500f;
+  --block: #b00020;
+  --rule: #e6e6e2;
+  --code-bg: #f3f3ef;
+  --table-stripe: #f7f7f3;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  max-width: 920px;
+  margin: 2em auto;
+  padding: 0 1.25em;
+  color: var(--fg);
+  background: var(--bg);
+  line-height: 1.5;
+}
+header {
+  border-bottom: 2px solid var(--rule);
+  padding-bottom: 0.75em;
+  margin-bottom: 1.25em;
+}
+header h1 {
+  margin: 0 0 0.25em 0;
+  font-size: 1.55em;
+}
+.tldr {
+  font-size: 1em;
+  color: var(--muted);
+  margin: 0.25em 0 0.6em 0;
+  font-style: italic;
+}
+.badges {
+  display: flex;
+  gap: 0.5em;
+  flex-wrap: wrap;
+  margin-top: 0.5em;
+}
+.badge {
+  display: inline-block;
+  font-size: 0.72em;
+  padding: 0.15em 0.6em;
+  border-radius: 4px;
+  background: #e8e8e2;
+  color: #333;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.badge.wave1 { background: #4a3aff; color: white; }
+.badge.wave2 { background: #2956a3; color: white; }
+.badge.wave3 { background: #207e3c; color: white; }
+.badge.severity-BLOCKING { background: var(--block); color: white; }
+.badge.severity-IMPORTANT { background: var(--warn); color: white; }
+.badge.severity-SUGGESTION { background: #555; color: white; }
+.badge.mockup { background: #e0c100; color: black; }
+section { margin: 1.5em 0; }
+section h2 {
+  font-size: 1.05em;
+  margin: 0 0 0.5em 0;
+  color: var(--accent);
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.2em;
+}
+.method {
+  background: var(--code-bg);
+  padding: 0.75em 1em;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82em;
+  overflow-x: auto;
+  white-space: pre;
+}
+.chart-wrap {
+  text-align: center;
+  margin: 1em 0;
+}
+.chart-wrap img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--rule);
+  background: white;
+  padding: 0.25em;
+  border-radius: 3px;
+}
+table.numbers {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+  margin-top: 0.75em;
+}
+table.numbers td {
+  padding: 0.35em 0.6em;
+  border-bottom: 1px solid var(--rule);
+}
+table.numbers tr:nth-child(even) { background: var(--table-stripe); }
+table.numbers td.metric { color: var(--muted); }
+table.numbers td.value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: right;
+  font-weight: 600;
+}
+.impact {
+  background: #f3f5f9;
+  padding: 0.75em 1em;
+  border-left: 4px solid var(--accent);
+  border-radius: 3px;
+}
+.impact p, .impact ul { margin: 0.4em 0; }
+.impact li { margin: 0.15em 0; }
+.plain-english {
+  background: #f5faf2;
+  padding: 0.75em 1em;
+  border-left: 4px solid #207e3c;
+  border-radius: 3px;
+  font-size: 0.97em;
+}
+.plain-english p, .plain-english ul { margin: 0.4em 0; }
+.plain-english li { margin: 0.15em 0; }
+.plain-english .lead {
+  font-size: 0.78em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #207e3c;
+  font-weight: 700;
+  margin-bottom: 0.3em;
+}
+footer.provenance {
+  font-size: 0.75em;
+  color: var(--muted);
+  border-top: 1px solid var(--rule);
+  padding-top: 0.6em;
+  margin-top: 2em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.mockup-banner {
+  background: #fff7d6;
+  border: 1px solid #e0c100;
+  padding: 0.5em 0.75em;
+  border-radius: 3px;
+  font-size: 0.85em;
+  margin-bottom: 1em;
+}
+.mockup-banner strong { color: #7a6700; }
+a, a:visited { color: var(--accent); }
+
+table.index {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1em;
+}
+table.index td {
+  padding: 0.55em 0.6em;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+table.index tr:nth-child(even) { background: var(--table-stripe); }
+table.index td.id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  width: 4em;
+}
+table.index td.title { font-weight: 600; }
+.tldr-row {
+  font-weight: 400;
+  font-size: 0.88em;
+  color: var(--muted);
+  font-style: italic;
+  margin-top: 0.15em;
+}
+table.index td.badges-cell { text-align: right; width: 18em; }
+</style>
+</head>
+<body>
+<header>
+  <h1>User-EDA findings index</h1>
+  <p class="tldr">
+    11 findings split across 3 waves. Wave 1 gates the harness target +
+    split convention + feature whitelist; Wave 2 fixes the evaluation regime
+    and audits content confounds; Wave 3 tests user-feature hypotheses.
+  </p>
+</header>
+<table class="index"><tbody>
+<tr>
+  <td class="id"><a href="F00_outcome_cardinality.html">F00</a></td>
+  <td class="title">Outcome cardinality check<div class="tldr-row">Binary target is lossless — `is_first_in_window` enforces 1 sig/pair by construction.</div></td>
+  <td class="badges-cell"><span class="badge wave1">Wave 1</span> <span class="badge severity-BLOCKING">BLOCKING</span> <span class="badge">confounder</span> </td>
+</tr><tr>
+  <td class="id"><a href="F01_cohort_aging_decomposition.html">F01</a></td>
+  <td class="title">YoY drift / cohort-aging decomposition<div class="tldr-row">Cohort aging explains 198% of pooled drift (&gt;100% because new low-AR cohorts dilute the pooled line).</div></td>
+  <td class="badges-cell"><span class="badge wave1">Wave 1</span> <span class="badge severity-BLOCKING">BLOCKING</span> <span class="badge">confounder</span> </td>
+</tr><tr>
+  <td class="id"><a href="F02_concentration_and_evaluation_stratification.html">F02</a></td>
+  <td class="title">Action concentration → evaluation stratification<div class="tldr-row">Top 1% → 26.5% of actions; top 10% → 84%. Unstratified metrics are invalid.</div></td>
+  <td class="badges-cell"><span class="badge wave2">Wave 2</span> <span class="badge severity-IMPORTANT">IMPORTANT</span> <span class="badge">confounder</span> </td>
+</tr><tr>
+  <td class="id"><a href="F03_same_row_engagement_leakage.html">F03</a></td>
+  <td class="title">Same-row engagement leakage diagnostic<div class="tldr-row">71.6% of `opened` is purely imputed. Drop all three engagement flags from feature whitelist.</div></td>
+  <td class="badges-cell"><span class="badge wave1">Wave 1</span> <span class="badge severity-BLOCKING">BLOCKING</span> <span class="badge">confounder</span> </td>
+</tr><tr>
+  <td class="id"><a href="F04_email_date_opportunity_audit.html">F04</a></td>
+  <td class="title">Email / date opportunity audit<div class="tldr-row">How much apparent user-variance is actually email-mix or date-mix?</div></td>
+  <td class="badges-cell"><span class="badge wave2">Wave 2</span> <span class="badge severity-IMPORTANT">IMPORTANT</span> <span class="badge">confounder</span> </td>
+</tr><tr>
+  <td class="id"><a href="F05_valley_decomposition_91_180d.html">F05</a></td>
+  <td class="title">91-180d tenure valley decomposition<div class="tldr-row">Is the engagement valley user fatigue or content allocation? Where does it leak?</div></td>
+  <td class="badges-cell"><span class="badge wave2">Wave 2</span> <span class="badge severity-IMPORTANT">IMPORTANT</span> <span class="badge">both</span> </td>
+</tr><tr>
+  <td class="id"><a href="F06_recency_rfm_baseline.html">F06</a></td>
+  <td class="title">Recency-weighted RFM baseline + send-frequency heterogeneity<div class="tldr-row">What&#x27;s the AUC of a model with prior-window AR/click/open rates only? This is the floor.</div></td>
+  <td class="badges-cell"><span class="badge wave3">Wave 3</span> <span class="badge severity-IMPORTANT">IMPORTANT</span> <span class="badge">feature-eng</span> </td>
+</tr><tr>
+  <td class="id"><a href="F07_embedding_affinity_with_ablations.html">F07</a></td>
+  <td class="title">Embedding affinity (with full ablation ladder)<div class="tldr-row">Does cosine(user_centroid, today_email) add lift beyond F06? Or is it a power-user detector?</div></td>
+  <td class="badges-cell"><span class="badge wave3">Wave 3</span> <span class="badge severity-IMPORTANT">IMPORTANT</span> <span class="badge">feature-eng</span> </td>
+</tr><tr>
+  <td class="id"><a href="F08_action_survival_hazard.html">F08</a></td>
+  <td class="title">Action survival / hazard<div class="tldr-row">After signing, does the next-action probability spike, decay, or persist? Streak users?</div></td>
+  <td class="badges-cell"><span class="badge wave3">Wave 3</span> <span class="badge severity-IMPORTANT">IMPORTANT</span> <span class="badge">feature-eng</span> </td>
+</tr><tr>
+  <td class="id"><a href="F09_competing_risk_unsubscribe.html">F09</a></td>
+  <td class="title">Competing-risk unsubscribe modeling<div class="tldr-row">High-AR users may also be high-unsub-risk. Naive lift overstates if so.</div></td>
+  <td class="badges-cell"><span class="badge wave3">Wave 3</span> <span class="badge severity-IMPORTANT">IMPORTANT</span> <span class="badge">confounder</span> </td>
+</tr><tr>
+  <td class="id"><a href="F10_temporal_autocorrelation.html">F10</a></td>
+  <td class="title">Temporal autocorrelation of opens / clicks / actions<div class="tldr-row">Cheap windowed-aggregation features — may beat F06&#x27;s RFM baseline.</div></td>
+  <td class="badges-cell"><span class="badge wave3">Wave 3</span> <span class="badge severity-IMPORTANT">IMPORTANT</span> <span class="badge">feature-eng</span> </td>
+</tr>
+</tbody></table>
+<footer class="provenance">
+  Plan: /Users/aaronmyran/.claude/plans/great-that-s-perfect-next-steady-mochi.md &middot;
+  Data: civic_shout_user_emails v2, civic_shout_emails v1 &middot;
+  Project: projects/civic_shout_action_rate_increase
+</footer>
+</body>
+</html>
