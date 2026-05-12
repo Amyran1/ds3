@@ -24,3 +24,6 @@ projects_v2/**/features/**/*.parquet
 
 # Oversized / mis-generated EDA artifact (do not commit multi-GB HTML)
 projects_v2/civic_shout_content_routing/features/recency_decayed_contrastive_per_channel_v1/eda.html
+
+# Civic Shout content routing exploration (large parquet; regenerate locally)
+data/projects/civic_shout_content_routing/exploration/wide_engagement.parquet
