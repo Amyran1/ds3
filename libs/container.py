@@ -104,14 +104,23 @@ class Container:
 
     @property
     def mongo(self) -> MongoClient:
-        """Lazy MongoDB client, shared for the container lifetime.
+        """Lazy MongoDB client for the default database (``settings.mongo_database``).
 
         Enter via ``async with c.mongo as mongo:`` when an active
         connection is required.
         """
-        if "mongo" not in self._instances:
-            self._instances["mongo"] = self._make_mongo()
-        return self._instances["mongo"]  # type: ignore[return-value]
+        return self.mongo_db(self._settings.mongo_database)
+
+    def mongo_db(self, database: str) -> MongoClient:
+        """Lazy MongoDB client for the given database, shared for container lifetime.
+
+        Use when you need to target a database other than ``settings.mongo_database``
+        (e.g. ``c.mongo_db("content_routing")``). The client is cached per database name.
+        """
+        key = f"mongo:{database}"
+        if key not in self._instances:
+            self._instances[key] = self._make_mongo_for(database)
+        return self._instances[key]  # type: ignore[return-value]
 
     @property
     def s3(self) -> S3Client:
@@ -161,12 +170,12 @@ class Container:
             cost_tracker=self._tracker,
         )
 
-    def _make_mongo(self) -> MongoClient:
+    def _make_mongo_for(self, database: str) -> MongoClient:
         from libs.clients.mongo import MongoClient
 
         return MongoClient(
             uri=self._settings.mongo_uri.get_secret_value(),
-            database=self._settings.mongo_database,
+            database=database,
             cost_tracker=self._tracker,
         )
 

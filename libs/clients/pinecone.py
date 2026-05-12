@@ -268,7 +268,7 @@ class PineconeClient:
 
         return total
 
-    async def embed_sparse(  # ### DO NOT USE THIS YET###
+    async def embed_sparse(
         self,
         texts: list[str],
         *,
@@ -278,9 +278,7 @@ class PineconeClient:
         max_batch_size: int = _INFERENCE_MAX_BATCH,
         return_tokens: bool = False,
     ) -> list[SparseEmbedding]:
-        """### DO NOT USE THIS YET###
-
-        Generate sparse embeddings via Pinecone Inference.
+        """Generate sparse embeddings via Pinecone Inference.
 
         Defaults target the ``pinecone-sparse-english-v0`` model. Batches are
         dispatched concurrently under the client's existing rate limiter; each
