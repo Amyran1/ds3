@@ -9,11 +9,11 @@ gap_finder:
   n: 5
   champion_only: true
 budget:
-  iterations_max: 3
-  dollars_max: 10.0
+  iterations_max: 15
+  dollars_max: 100.0
   wall_seconds_max: 7200
-  per_session_dollars_max: 3.0
-  per_session_wall_seconds_max: 600
+  per_session_dollars_max: 10.0
+  per_session_wall_seconds_max: 900
 plateau:
   top_k: 3
   window_iters: 6
