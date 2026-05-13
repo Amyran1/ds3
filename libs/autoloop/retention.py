@@ -32,6 +32,44 @@ def _parse_champion_run_id(champion_path: Path) -> str | None:
     return None
 
 
+def _detect_champion_from_results(
+    results_path: Path,
+    comparison_group: str,
+    primary_metric: str,
+    metric_direction: Literal["higher_is_better", "lower_is_better"],
+) -> str | None:
+    if not results_path.exists():
+        return None
+    champion_candidates: list[tuple[float, str]] = []
+    for lineno, raw in enumerate(results_path.read_text().splitlines(), 1):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("results.jsonl line %d: JSONDecodeError — skipping", lineno)
+            continue
+        if row.get("comparison_group") != comparison_group:
+            continue
+        if row.get("scope") not in {"comparison", "champion_candidate"}:
+            continue
+        if row.get("status") != "completed":
+            continue
+        value = row.get(primary_metric)
+        if value is None:
+            continue
+        run_id = row.get("run_id")
+        if not run_id:
+            continue
+        champion_candidates.append((float(value), str(run_id)))
+    if not champion_candidates:
+        return None
+    reverse = metric_direction == "higher_is_better"
+    champion_candidates.sort(key=lambda t: t[0], reverse=reverse)
+    return champion_candidates[0][1]
+
+
 def prune_old_predictions(
     project_root: Path,
     project: str,
@@ -86,8 +124,24 @@ def prune_old_predictions(
 
     champion_path = runs_dir / "CHAMPION.md"
     champion_run_id = _parse_champion_run_id(champion_path)
-    if champion_run_id:
-        protected.add(champion_run_id)
+    if champion_run_id is None:
+        champion_run_id = _detect_champion_from_results(
+            results_path, comparison_group, primary_metric, metric_direction
+        )
+        if champion_run_id is None:
+            logger.warning(
+                "No champion found for comparison_group=%s — champion pinning skipped",
+                comparison_group,
+            )
+
+    if champion_run_id is not None:
+        champion_predictions = runs_dir / champion_run_id / "artifacts" / "predictions.parquet"
+        if champion_predictions.exists():
+            protected.add(champion_run_id)
+            logger.info(
+                "Pinning champion %s (predictions.parquet protected from prune)",
+                champion_run_id,
+            )
 
     report = PruneReport(kept_run_ids=sorted(protected))
 

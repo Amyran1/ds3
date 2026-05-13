@@ -279,3 +279,94 @@ def test_prune_kept_run_ids_matches_protected_set(tmp_path: Path) -> None:
     )
 
     assert set(report.kept_run_ids) == {"run_03", "run_04", "run_01"}
+
+
+def test_prune_pins_champion_when_lower_metric_in_top_k(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    project_root, runs_dir = _make_project(tmp_path)
+
+    # 6 runs: champion (run_01) has the lowest metric (0.4); others range 0.5-0.9
+    run_metrics = {
+        "run_01": 0.4,
+        "run_02": 0.5,
+        "run_03": 0.6,
+        "run_04": 0.7,
+        "run_05": 0.8,
+        "run_06": 0.9,
+    }
+    for rid in run_metrics:
+        _make_run(runs_dir, rid)
+
+    rows = [_results_row(rid, metric=m) for rid, m in run_metrics.items()]
+    _write_results(runs_dir, rows)
+
+    # CHAMPION.md pins run_01 explicitly
+    (runs_dir / "CHAMPION.md").write_text("**run_id**: run_01\n\nManually pinned.\n")
+
+    with caplog.at_level(logging.INFO):
+        report = prune_old_predictions(
+            project_root=project_root,
+            project="proj",
+            comparison_group="cg1",
+            primary_metric="roc_auc",
+            metric_direction="higher_is_better",
+            top_k=5,
+        )
+
+    # Champion run_01 must be protected despite having the lowest metric
+    assert "run_01" in report.kept_run_ids
+    assert (runs_dir / "run_01" / "artifacts" / "predictions.parquet").exists()
+    assert "Pinning champion run_01" in caplog.text
+
+
+def test_prune_handles_missing_champion_md(tmp_path: Path) -> None:
+    project_root, runs_dir = _make_project(tmp_path)
+
+    for i in range(1, 4):
+        _make_run(runs_dir, f"run_0{i}")
+
+    rows = [_results_row(f"run_0{i}", metric=float(i)) for i in range(1, 4)]
+    _write_results(runs_dir, rows)
+
+    # No CHAMPION.md — should fall back to auto-detection (run_03 has highest metric)
+    report = prune_old_predictions(
+        project_root=project_root,
+        project="proj",
+        comparison_group="cg1",
+        primary_metric="roc_auc",
+        metric_direction="higher_is_better",
+        top_k=1,
+    )
+
+    # run_03 wins top-K AND auto-detected champion — either way it's kept
+    assert "run_03" in report.kept_run_ids
+    # No crash: function returned normally without CHAMPION.md
+    assert report.error_count == 0
+
+
+def test_prune_handles_no_completed_comparison_runs(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    project_root, runs_dir = _make_project(tmp_path)
+
+    for i in range(1, 4):
+        _make_run(runs_dir, f"run_0{i}")
+
+    # Only smoke-scope runs — no champion can be auto-detected
+    rows = [_results_row(f"run_0{i}", metric=float(i), scope="smoke") for i in range(1, 4)]
+    _write_results(runs_dir, rows)
+
+    with caplog.at_level(logging.WARNING):
+        report = prune_old_predictions(
+            project_root=project_root,
+            project="proj",
+            comparison_group="cg1",
+            primary_metric="roc_auc",
+            metric_direction="higher_is_better",
+            top_k=2,
+        )
+
+    # No crash; top-K still works on smoke runs for the eligible pool
+    assert report.files_removed + len(report.kept_run_ids) == 3
+    assert "champion pinning skipped" in caplog.text
