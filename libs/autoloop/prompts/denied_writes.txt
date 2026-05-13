@@ -1,0 +1,20 @@
+# Project harness contract — read-only to autoloop
+/harness\.py$
+/eda\.py$
+/discovery\.py$
+
+# Library code — read-only to autoloop
+(^|/)libs/
+
+# Outcome definitions — read-only to autoloop
+/outcomes/
+
+# Entity caches — read-only to autoloop (cross-cutting; promoted)
+(^|/)entities/
+
+# Autoloop control state — only the supervisor writes these
+/autoloop/config\.yaml$
+/autoloop/iterations\.jsonl$
+/autoloop/budget\.json$
+/autoloop/failure_modes\.jsonl$
+/autoloop/idea_registry\.md$

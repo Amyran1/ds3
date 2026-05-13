@@ -1,0 +1,50 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "Glob",
+      "Grep",
+      "Agent"
+    ],
+    "deny": [
+      {"tool": "Edit", "path_pattern": "**/harness.py"},
+      {"tool": "Edit", "path_pattern": "**/eda.py"},
+      {"tool": "Edit", "path_pattern": "**/discovery.py"},
+      {"tool": "Edit", "path_pattern": "libs/**"},
+      {"tool": "Edit", "path_pattern": "**/outcomes/**"},
+      {"tool": "Edit", "path_pattern": "entities/**"},
+      {"tool": "Edit", "path_pattern": "**/autoloop/config.yaml"},
+      {"tool": "Edit", "path_pattern": "**/autoloop/iterations.jsonl"},
+      {"tool": "Edit", "path_pattern": "**/autoloop/budget.json"},
+      {"tool": "Edit", "path_pattern": "**/autoloop/failure_modes.jsonl"},
+      {"tool": "Write", "path_pattern": "**/harness.py"},
+      {"tool": "Write", "path_pattern": "**/eda.py"},
+      {"tool": "Write", "path_pattern": "**/discovery.py"},
+      {"tool": "Write", "path_pattern": "libs/**"},
+      {"tool": "Write", "path_pattern": "**/outcomes/**"},
+      {"tool": "Write", "path_pattern": "entities/**"},
+      {"tool": "MultiEdit", "path_pattern": "**/harness.py"},
+      {"tool": "MultiEdit", "path_pattern": "**/eda.py"},
+      {"tool": "MultiEdit", "path_pattern": "**/discovery.py"},
+      {"tool": "MultiEdit", "path_pattern": "libs/**"},
+      {"tool": "Bash", "command_pattern": "^\\s*git\\s+(commit|push|reset|checkout)\\b"}
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{hook_path}}"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -27,6 +27,7 @@ dependencies = [
     "pyyaml>=6.0",
     "beautifulsoup4>=4.12",
     "torch>=2.4",
+    "faiss-cpu>=1.7",
 ]
 
 [project.optional-dependencies]
@@ -47,7 +48,10 @@ line-length = 100
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-markers = ["integration: hits real external APIs (deselect with -m 'not integration')"]
+markers = [
+    "integration: hits real external APIs (deselect with -m 'not integration')",
+    "slow: supervisor/session integration tests that run subprocesses or event loops",
+]
 
 [tool.pyright]
 pythonVersion = "3.12"

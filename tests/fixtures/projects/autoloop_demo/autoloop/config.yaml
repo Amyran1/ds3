@@ -1,0 +1,30 @@
+project: autoloop_demo
+outcome_variable: actioned
+comparison_group: demo_v1
+primary_metric: roc_auc
+metric_direction: higher_is_better
+sample_frac: 0.10
+gap_finder:
+  cadence: never
+budget:
+  iterations_max: 5
+  dollars_max: 10.0
+  wall_seconds_max: 1800
+  per_session_dollars_max: 1.0
+  per_session_wall_seconds_max: 90
+plateau:
+  top_k: 3
+  window_iters: 2
+loop_detection:
+  dedup_reject_streak: 4
+  identical_args_streak: 3
+curriculum:
+  explore_fraction: 0.4
+  exploit_top_k: 3
+checkpoint:
+  human_every_n_iters: 0
+  slack_milestone_iters: []
+session:
+  planner_model: claude-opus-4-7
+  executor_model: claude-opus-4-7
+  cli_path: ""
