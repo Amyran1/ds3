@@ -68,7 +68,7 @@ python -m libs.autoloop.dedup check \
 If the result is `MATCH`, skip that idea entirely (do not append). If `NO_MATCH`, proceed.
 
 **Step 5 — Write brainstorm.jsonl.**
-For each new idea that passed dedup: append one line to `projects/{{project}}/autoloop/brainstorm.jsonl` with schema `brainstorm_item/v1`.
+For each new idea that passed dedup: append one line to `projects/{{project}}/autoloop/brainstorm.jsonl` with schema `brainstorm_item/v1`. The `source.kind` field must be one of: `"discovery"`, `"eda"`, `"user"`, `"seed"`, `"reflection"`, `"planner"`. Ideas you author directly should use `"planner"`.
 For each existing idea being re-ranked: append one line with the same `id` and updated `tier`, `tier_score`, `tier_rationale` fields.
 Do not rewrite or truncate the file. Append only.
 

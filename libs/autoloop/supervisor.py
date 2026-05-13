@@ -10,7 +10,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from libs.autoloop import curriculum, prereqs, registry, retention, session, slack, termination
+from libs.autoloop import (
+    curriculum,
+    prereqs,
+    registry,
+    retention,
+    session,
+    slack,
+    termination,
+)
 from libs.autoloop.budget import AutoloopBudget
 from libs.autoloop.failure_modes import (
     append_failure_mode,
@@ -18,6 +26,7 @@ from libs.autoloop.failure_modes import (
     format_for_prompt,
     recent_failures,
 )
+from libs.autoloop.progress import Heartbeat, event, fmt_dur
 from libs.autoloop.state import (
     AutoloopConfig,
     BrainstormItem,
@@ -29,6 +38,7 @@ from libs.autoloop.state import (
     PlannerSummary,
     SessionResult,
     State,
+    TerminationCheck,
     read_jsonl_iter,
 )
 from libs.container import Container
@@ -143,6 +153,10 @@ async def _outer_loop(
                 last_top3_metrics=[],
                 iters_since_top3_change=0,
             )
+            event(
+                f"TERMINATE · reason={verdict.reason} · iters_used={snap.iterations_used}"
+                f" · dollars_used=${snap.dollars_used:.2f}"
+            )
             slack.notify_termination(cfg, verdict.reason or "unknown", snap)
             _write_final_report(state, cfg, verdict, snap)
             return _verdict_to_exit_code(verdict.reason)
@@ -162,6 +176,9 @@ async def _outer_loop(
         ts_start = datetime.now(tz=timezone.utc).isoformat()
         iter_rec = IterationRecord(iteration_id=iter_id, ts_start=ts_start)
 
+        _iter_start_snap = budget.snapshot(
+            last_top3_run_ids=[], last_top3_metrics=[], iters_since_top3_change=0
+        )
         decision = curriculum.decide(
             iter_id, cfg.budget.iterations_max, cfg.curriculum.explore_fraction
         )
@@ -170,17 +187,44 @@ async def _outer_loop(
             or cfg.gap_finder.cadence == "every_iter"
         )
 
+        queue_size = len([i for i in state.load_brainstorm() if i.status == "queued"])
+        event(
+            f"iter {iter_id}/{cfg.budget.iterations_max} · start"
+            f" · queue={queue_size}"
+            f" · phase={decision.phase.lower()}"
+            f" · cumulative=${_iter_start_snap.dollars_used:.2f}/${_iter_start_snap.dollars_max:.2f}"
+        )
+
+        event(f"iter {iter_id}/{cfg.budget.iterations_max} · planner.spawn")
+        _planner_hb = Heartbeat(f"iter {iter_id}/{cfg.budget.iterations_max} · planner")
+        _planner_hb.start()
         try:
             planner_result = await _run_planner(
                 args, cfg, state, container, budget, iter_id, decision, run_gap_finder
             )
             iter_rec.planner = planner_result
+            _planner_hb.stop()
             if planner_result.exit_code != 0:
                 planner_fail_streak += 1
+                event(
+                    f"iter {iter_id}/{cfg.budget.iterations_max} · planner.crashed"
+                    f" · kill_reason={planner_result.kill_reason}"
+                    f" · ${planner_result.dollars:.2f}"
+                    f" · {fmt_dur(planner_result.wall_seconds)}"
+                )
             else:
                 planner_fail_streak = 0
+                event(
+                    f"iter {iter_id}/{cfg.budget.iterations_max} · planner.done"
+                    f" · added={planner_result.brainstorm_added}"
+                    f" reranked={planner_result.brainstorm_reranked}"
+                    f" · ${planner_result.dollars:.2f}"
+                    f" · {fmt_dur(planner_result.wall_seconds)}"
+                    f" · exit={planner_result.kill_reason or 'normal'}"
+                )
         except Exception:
             logger.exception("planner phase crashed")
+            _planner_hb.stop()
             planner_fail_streak += 1
             iter_rec.planner = PlannerResult(
                 role="planner",
@@ -190,6 +234,10 @@ async def _outer_loop(
                 log_path="",
                 wall_seconds=0.0,
                 kill_reason="crashed",
+            )
+            event(
+                f"iter {iter_id}/{cfg.budget.iterations_max} · planner.crashed"
+                f" · kill_reason=exception · $0.00 · 0s"
             )
 
         if iter_rec.planner is not None and iter_rec.planner.exit_code != 0:
@@ -207,13 +255,22 @@ async def _outer_loop(
 
         if not termination.brainstorm_has_queued(state):
             iter_rec.executor = None
+            iter_rec.termination_checks = TerminationCheck(brainstorm_exhausted=True)
             state.append_iteration(_finalize_iter_rec(iter_rec, budget))
-            slack.notify_termination(
+            snap = budget.snapshot(
+                last_top3_run_ids=[], last_top3_metrics=[], iters_since_top3_change=0
+            )
+            slack.notify_termination(cfg, "brainstorm_exhausted", snap)
+            _write_final_report(
+                state,
                 cfg,
-                "brainstorm_exhausted",
-                budget.snapshot(
-                    last_top3_run_ids=[], last_top3_metrics=[], iters_since_top3_change=0
+                termination.TerminationVerdict(
+                    should_stop=True,
+                    reason="brainstorm_exhausted",
+                    checks=iter_rec.termination_checks,
+                    details={},
                 ),
+                snap,
             )
             return SupervisorExitCode.BRAINSTORM_EXHAUSTED
 
@@ -222,15 +279,26 @@ async def _outer_loop(
             state.append_iteration(_finalize_iter_rec(iter_rec, budget))
             continue
 
+        _title = top.title[:60] + ("..." if len(top.title) > 60 else "")
+        event(f'iter {iter_id}/{cfg.budget.iterations_max} · executor.spawn · idea="{_title}"')
+        _executor_hb = Heartbeat(f"iter {iter_id}/{cfg.budget.iterations_max} · executor")
+        _executor_hb.start()
         try:
             executor_result = await _run_executor(args, cfg, state, container, budget, iter_id, top)
             iter_rec.executor = executor_result
+            _executor_hb.stop()
             if executor_result.exit_code != 0 or executor_result.run_record_status not in (
                 "completed",
             ):
                 executor_fail_streak += 1
                 state.mark_failed(
                     top.id, iteration_id=iter_id, reason=str(executor_result.kill_reason)
+                )
+                event(
+                    f"iter {iter_id}/{cfg.budget.iterations_max} · executor.crashed"
+                    f" · kill_reason={executor_result.kill_reason}"
+                    f" · ${executor_result.dollars:.2f}"
+                    f" · {fmt_dur(executor_result.wall_seconds)}"
                 )
             else:
                 executor_fail_streak = 0
@@ -240,8 +308,31 @@ async def _outer_loop(
                     run_id=executor_result.run_id,
                     status="run_completed",
                 )
+                _outcome = (
+                    "shipped"
+                    if executor_result.run_record_status == "completed"
+                    else (
+                        "skipped"
+                        if executor_result.run_record_status == "failed_validation"
+                        else "failed"
+                    )
+                )
+                _metric_str = (
+                    f"{executor_result.harness_metric:.4f}"
+                    if executor_result.harness_metric is not None
+                    else "NA"
+                )
+                event(
+                    f"iter {iter_id}/{cfg.budget.iterations_max} · executor.done"
+                    f" · run_id={executor_result.run_id or 'NA'}"
+                    f" · metric={_metric_str}"
+                    f" · ${executor_result.dollars:.2f}"
+                    f" · {fmt_dur(executor_result.wall_seconds)}"
+                    f" · outcome={_outcome}"
+                )
         except Exception:
             logger.exception("executor phase crashed")
+            _executor_hb.stop()
             executor_fail_streak += 1
             iter_rec.executor = ExecutorResult(
                 role="executor",
@@ -255,6 +346,10 @@ async def _outer_loop(
                 run_id=None,
             )
             state.mark_failed(top.id, iteration_id=iter_id, reason="exception")
+            event(
+                f"iter {iter_id}/{cfg.budget.iterations_max} · executor.crashed"
+                f" · kill_reason=exception · $0.00 · 0s"
+            )
 
         if iter_rec.executor is not None and iter_rec.executor.exit_code != 0:
             await _capture_failure(
@@ -297,6 +392,33 @@ async def _outer_loop(
         )
         if commit_sha:
             logger.info("autoloop iter %d committed as %s", iter_id, commit_sha[:8])
+            _commit_subject = _get_commit_subject(args.project_root)
+            event(
+                f"iter {iter_id}/{cfg.budget.iterations_max} · committed"
+                f" · sha={commit_sha[:7]}"
+                f' · "{_commit_subject}"'
+            )
+
+        _iter_end_snap = budget.snapshot(
+            last_top3_run_ids=[], last_top3_metrics=[], iters_since_top3_change=0
+        )
+        try:
+            _iter_wall = (
+                (
+                    datetime.fromisoformat(iter_rec.ts_end)
+                    - datetime.fromisoformat(iter_rec.ts_start)
+                ).total_seconds()
+                if iter_rec.ts_end and iter_rec.ts_start
+                else 0.0
+            )
+        except (ValueError, TypeError):
+            _iter_wall = 0.0
+        _total_wall = _iter_end_snap.wall_seconds_used
+        event(
+            f"iter {iter_id}/{cfg.budget.iterations_max} · iter.done"
+            f" · cumulative=${_iter_end_snap.dollars_used:.2f}/${_iter_end_snap.dollars_max:.2f}"
+            f" · wall={fmt_dur(_iter_wall)}/{fmt_dur(_total_wall)}"
+        )
 
         slack.notify_milestone(cfg, iter_id, iter_rec, snap)
 
@@ -798,6 +920,20 @@ def _commit_iteration(
     except Exception as err:
         logger.warning("auto-commit failed: %s", err)
         return None
+
+
+def _get_commit_subject(project_root: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.stdout.strip()[:80] if result.returncode == 0 else ""
+    except Exception:
+        return ""
 
 
 def _finalize_iter_rec(iter_rec: IterationRecord, budget: AutoloopBudget) -> IterationRecord:

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,7 @@ class AutoloopConfig(BaseModel):
 class BrainstormSource(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
-    kind: Literal["discovery", "eda", "user", "seed", "reflection"]
+    kind: Literal["discovery", "eda", "user", "seed", "reflection", "planner"]
     ref: str | None = None
     finding_id: str | None = None
 
@@ -402,8 +402,8 @@ class State:
         for row in latest.values():
             try:
                 result.append(BrainstormItem.model_validate(row))
-            except Exception:
-                logger.warning("Could not parse BrainstormItem — skipping")
+            except ValidationError as e:
+                logger.warning("Could not parse BrainstormItem — skipping: %s", e)
         return result
 
     def pop_top_queued(self) -> BrainstormItem | None:
