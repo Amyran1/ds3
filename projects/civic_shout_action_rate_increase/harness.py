@@ -23,6 +23,10 @@ class LeakageError(Exception):
     pass
 
 
+class ConfoundJoinError(ValueError):
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Stratification constants
 # ---------------------------------------------------------------------------
@@ -32,7 +36,17 @@ _TENURE_LABELS = ["0-7d", "8-30d", "31-90d", "91-180d", "181-365d", "1-2yr", "2y
 _PRIOR_ACTION_BINS = [0, 1, 2, 5, 20, 1_000_000]
 _PRIOR_ACTION_LABELS = ["0", "1", "2-4", "5-19", "20+"]
 
-_FORBIDDEN_COLS = {"opened", "clicked", "verified_opened"}
+# Denylist of outcome and outcome-derived columns. Allowlist-by-feature-dictionary
+# is a follow-up when > 2 feature families exist.
+_FORBIDDEN_COLS = {
+    "opened",
+    "clicked",
+    "verified_opened",
+    "actioned",
+    "actioned_24h",
+    "n_actions_24h",
+    "unsubscribed",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +537,14 @@ def _compute_confound_scores_full_data(full_df: pl.DataFrame) -> pl.DataFrame:
         email_date_level, on=["email_id", "date_sent"], how="left"
     ).select(["user_id", "email_id", "date_sent", "email_popularity_score"])
 
-    return user_scores.join(email_scores, on=["user_id", "email_id", "date_sent"], how="inner")
+    joined = user_scores.join(email_scores, on=["user_id", "email_id", "date_sent"], how="inner")
+    if len(joined) != len(user_scores) or len(joined) != len(email_scores):
+        raise ConfoundJoinError(
+            f"Confound join produced {len(joined)} rows but expected {len(user_scores)} "
+            f"(user_scores) == {len(email_scores)} (email_scores). "
+            "Duplicate (user_id, email_id, date_sent) keys detected."
+        )
+    return joined
 
 
 # ---------------------------------------------------------------------------
