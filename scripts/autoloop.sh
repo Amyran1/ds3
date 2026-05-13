@@ -18,6 +18,13 @@ set -euo pipefail
 PROJECT="${PROJECT:-california_housing_demo}"
 PORT="${PORT:-8765}"
 MODE="${MODE:-}"
+ITERS="${ITERS:-}"
+BUDGET="${BUDGET:-}"
+
+# Build runtime cap override flags
+EXTRA_ARGS=""
+[[ -n "$ITERS"  ]] && EXTRA_ARGS="$EXTRA_ARGS --budget $ITERS"
+[[ -n "$BUDGET" ]] && EXTRA_ARGS="$EXTRA_ARGS --dollars $BUDGET"
 
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
@@ -96,7 +103,7 @@ echo ""
 
 # Note: MODE may contain --once (one arg) or be empty.
 # shellcheck disable=SC2086
-python -m libs.autoloop run --project "$PROJECT" ${MODE} --verbose
+python -m libs.autoloop run --project "$PROJECT" ${MODE} ${EXTRA_ARGS} --verbose
 
 echo ""
 echo "════════════════════════════════════════════════════════════════════════"

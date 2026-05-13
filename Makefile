@@ -8,6 +8,20 @@
 PROJECT ?= california_housing_demo
 PORT    ?= 8765
 
+# Runtime cap overrides (empty = use config.yaml defaults)
+ITERS   ?=
+BUDGET  ?=
+
+# Lowercase aliases — `make autoloop iters=10 budget=50` reads naturally
+iters   ?=
+budget  ?=
+ifneq ($(iters),)
+ITERS := $(iters)
+endif
+ifneq ($(budget),)
+BUDGET := $(budget)
+endif
+
 # Treat the venv activator as the canonical "is the venv ready" check.
 VENV_ACTIVATE := .venv/bin/activate
 
@@ -36,12 +50,16 @@ help:
 	@echo "  PROJECT=name                    Which project to run"
 	@echo "                                  (default: $(PROJECT))"
 	@echo "  PORT=8765                       Dashboard HTTP port"
+	@echo "  iters=N                         Override iter cap (default: from config.yaml)"
+	@echo "  budget=X                        Override dollar cap (default: from config.yaml)"
 	@echo ""
 	@echo "Examples"
 	@echo "─────────────────────────────────────────────────────────────────"
 	@echo "  make autoloop-once"
 	@echo "  make autoloop-once PROJECT=civic_shout_action_rate_increase"
-	@echo "  make autoloop PROJECT=civic_shout_action_rate_increase"
+	@echo "  make autoloop PROJECT=civic_shout_action_rate_increase iters=70 budget=50"
+	@echo "  make autoloop iters=20                              # 20 iters, default \$\$ cap"
+	@echo "  make autoloop budget=10                             # default iters, \$10 cap"
 	@echo "  make autoloop-stop PROJECT=civic_shout_action_rate_increase"
 	@echo ""
 	@echo "Dev setup"
@@ -53,10 +71,10 @@ help:
 # ─── Autoloop ──────────────────────────────────────────────────────────────
 
 autoloop-once:
-	@PROJECT=$(PROJECT) PORT=$(PORT) MODE=--once ./scripts/autoloop.sh
+	@PROJECT=$(PROJECT) PORT=$(PORT) MODE=--once ITERS=$(ITERS) BUDGET=$(BUDGET) ./scripts/autoloop.sh
 
 autoloop:
-	@PROJECT=$(PROJECT) PORT=$(PORT) MODE= ./scripts/autoloop.sh
+	@PROJECT=$(PROJECT) PORT=$(PORT) MODE= ITERS=$(ITERS) BUDGET=$(BUDGET) ./scripts/autoloop.sh
 
 autoloop-dashboard:
 	@. $(VENV_ACTIVATE) && \
