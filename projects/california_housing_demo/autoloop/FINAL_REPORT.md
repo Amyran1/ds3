@@ -1,10 +1,10 @@
 # Autoloop final report
 
 Project: california_housing_demo
-Stopped at: 2026-05-13T15:55:36.494427+00:00
+Stopped at: 2026-05-13T17:16:06.860344+00:00
 Reason: iter_cap
-Iterations: 1 / 1
-Dollars: $3.56 / $5.00
-Wall: 0.1h
+Iterations: 5 / 3
+Dollars: $13.97 / $10.00
+Wall: 1.5h
 
 Top runs: []
