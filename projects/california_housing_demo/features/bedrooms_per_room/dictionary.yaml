@@ -1,0 +1,28 @@
+feature_set:
+  name: bedrooms_per_room
+  version: v1
+  recipe_version: bedrooms_per_room_v1
+  row_keys:
+    - name: row_id
+      dtype: int64
+  n_rows: 20640
+  cache_module: projects.california_housing_demo.features.bedrooms_per_room.cache
+  local_path: null
+  remote_path: null
+  local_path_reason: in-memory only; 20640-row vectorized division on sklearn dataset
+  source_versions:
+    sklearn_california_housing: pinned via project deps
+  source_fingerprints:
+    sklearn_california_housing: sha256:unpinned-stub
+  code_version: git:autoloop-iter-3
+  features:
+    - name: bedrooms_per_room
+      dtype: float64
+      semantic_type: numeric
+      description: >
+        AveBedrms / AveRooms per census block group. Both columns are
+        per-household means in the sklearn California Housing dataset; the
+        ratio is the share of rooms that are bedrooms (a denser proxy for
+        housing quality than either raw column). Brainstorm BS-2026-05-13-bpr003.
+      null_policy: no nulls expected; sklearn dataset guarantees AveRooms > 0
+      leakage_notes: pre-outcome inputs only; no temporal leakage path.
