@@ -1,12 +1,12 @@
 {
   "iterations_used": 5,
-  "iterations_max": 3,
-  "dollars_used": 13.97281875,
-  "dollars_max": 10.0,
-  "wall_seconds_used": 5245.735926,
+  "iterations_max": 15,
+  "dollars_used": 18.00290575,
+  "dollars_max": 100.0,
+  "wall_seconds_used": 5908.250019,
   "wall_seconds_max": 7200.0,
   "last_top3_run_ids": [],
   "last_top3_metrics": [],
   "iters_since_top3_change": 0,
-  "updated_at": "2026-05-13T17:16:06.859580+00:00"
+  "updated_at": "2026-05-13T17:27:09.373680+00:00"
 }

@@ -1,0 +1,51 @@
+feature_set:
+  name: winsorize_heavy_tails
+  version: v1
+  recipe_version: winsorize_heavy_tails_v1
+  row_keys:
+    - name: row_id
+      dtype: int64
+  n_rows: 20640
+  cache_module: projects.california_housing_demo.features.winsorize_heavy_tails.cache
+  local_path: null
+  remote_path: null
+  local_path_reason: in-memory only; four vectorized polars quantile-clip ops on sklearn dataset
+  source_versions:
+    sklearn_california_housing: pinned via project deps
+  source_fingerprints:
+    sklearn_california_housing: sha256:unpinned-stub
+  code_version: git:autoloop-iter-6
+  features:
+    - name: AveRooms_winz
+      dtype: float64
+      semantic_type: numeric
+      description: >
+        AveRooms capped at the 99th percentile of the input frame. Lower
+        tail unchanged. Brainstorm BS-2026-05-13-wh008.
+      null_policy: no nulls expected; sklearn dataset guarantees finite values
+      leakage_notes: >
+        Pure preprocessing of pre-outcome input; threshold computed from
+        the passed frame (sample at smoke time, full at comparison time).
+    - name: AveBedrms_winz
+      dtype: float64
+      semantic_type: numeric
+      description: >
+        AveBedrms capped at the 99th percentile of the input frame.
+      null_policy: no nulls expected
+      leakage_notes: pure preprocessing of pre-outcome input
+    - name: AveOccup_winz
+      dtype: float64
+      semantic_type: numeric
+      description: >
+        AveOccup capped at the 99th percentile of the input frame. Targets
+        the documented extreme-occupancy outliers (AveOccup > 1000 in a
+        small number of block groups).
+      null_policy: no nulls expected
+      leakage_notes: pure preprocessing of pre-outcome input
+    - name: Population_winz
+      dtype: float64
+      semantic_type: numeric
+      description: >
+        Population capped at the 99th percentile of the input frame.
+      null_policy: no nulls expected
+      leakage_notes: pure preprocessing of pre-outcome input
