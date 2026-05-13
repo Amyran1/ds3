@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 from libs.autoloop.state import SessionResult
-from libs.costs.tracker import CostTracker
+from libs.costs.tracker import CostRecord, CostTracker
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def run_claude_session(
         "--settings",
         str(settings_path),
         "--permission-mode",
-        "plan",
+        "bypassPermissions",  # see PreToolUse hook + settings deny for actual safety
         "--allowed-tools",
         ",".join(allowed_tools),
         "--disallowed-tools",
@@ -217,6 +217,21 @@ def _watch_session(
             dollars = cost_tracker.get(cost_key).total
         except Exception:
             dollars = 0.0
+
+    if dollars > 0:
+        try:
+            cost_tracker.record(
+                CostRecord(
+                    key=cost_key,
+                    amount=dollars,
+                    provider="anthropic",
+                    operation="claude_p_session",
+                    model=model,
+                    investigation="autoloop",
+                )
+            )
+        except Exception:
+            logger.exception("Failed to record session cost; budget tracking will under-count")
 
     raw_kill = kill_reason.get("value")
     if raw_kill in {"wall_cap", "dollar_cap"}:
