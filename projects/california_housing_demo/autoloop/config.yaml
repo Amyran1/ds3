@@ -6,7 +6,7 @@ metric_direction: higher_is_better
 goal_metric: 0.70
 sample_frac: 0.10
 gap_finder:
-  cadence: every_n
+  cadence: every_n_iters
   n: 1
   champion_only: true
 budget:

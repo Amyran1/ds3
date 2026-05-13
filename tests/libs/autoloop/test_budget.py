@@ -10,14 +10,24 @@ from libs.autoloop.state import AutoloopConfig, BudgetSnapshot, State
 
 
 class FakeCostTracker:
+    """Test double with both .total (legacy) and .entries (current) on summaries.
+
+    AutoloopBudget.dollars_used filters out claude_p_session records from
+    summary.entries; tests pass non-claude_p_session entries so they all count.
+    """
+
     def __init__(self, totals: dict[str, float]) -> None:
         self._totals = totals
 
+    def _make_summary(self, key: str, total: float) -> object:
+        entry = type("E", (), {"amount": total, "operation": "openai_embedding"})()
+        return type("S", (), {"total": total, "entries": [entry]})()
+
     def get_all(self) -> dict[str, object]:
-        return {k: type("S", (), {"total": v})() for k, v in self._totals.items()}
+        return {k: self._make_summary(k, v) for k, v in self._totals.items()}
 
     def get(self, key: str) -> object:
-        return type("S", (), {"total": self._totals.get(key, 0.0)})()
+        return self._make_summary(key, self._totals.get(key, 0.0))
 
 
 def _make_cfg(

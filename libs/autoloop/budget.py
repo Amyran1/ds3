@@ -32,12 +32,21 @@ class AutoloopBudget:
         return self._state.next_iteration_id() - 1
 
     def dollars_used(self) -> float:
+        # API spend only — exclude claude_p_session estimates because Claude Code
+        # subprocess invocations are free under an auth-membership plan. Historical
+        # records (before that decoupling) live in .costs/ledger.jsonl with
+        # operation="claude_p_session"; this filter ignores them at read time so
+        # we don't have to mutate the ledger.
         prefix = f"autoloop:{self._cfg.project}:"
-        return sum(
-            summary.total
-            for key, summary in self._tracker.get_all().items()
-            if key.startswith(prefix)
-        )
+        total = 0.0
+        for key, summary in self._tracker.get_all().items():
+            if not key.startswith(prefix):
+                continue
+            for entry in summary.entries:
+                if entry.operation == "claude_p_session":
+                    continue
+                total += entry.amount
+        return total
 
     def wall_seconds_used(self) -> float:
         if self._first_iter_ts is None:

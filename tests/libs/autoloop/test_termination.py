@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-
 from libs.autoloop.budget import AutoloopBudget
 from libs.autoloop.state import (
     AutoloopConfig,
@@ -166,18 +165,27 @@ def test_iter_cap_reached_triggers_termination(tmp_path: Path) -> None:
 
 
 def test_dollar_cap_reached_triggers_termination(tmp_path: Path) -> None:
-    from libs.costs.models import CostSummary
+    from libs.costs.models import CostEntry, CostSummary
 
     cfg = _make_cfg(dollars_max=10.0)
     state = _make_state(tmp_path, cfg)
 
+    # Budget filters claude_p_session from entries; pass a non-CLI entry so it counts.
+    entries = [
+        CostEntry(
+            key=f"autoloop:{cfg.project}:something",
+            amount=15.0,
+            provider="openai",
+            operation="openai_embedding",
+        )
+    ]
     tracker = MagicMock()
     tracker.get_all.return_value = {
         f"autoloop:{cfg.project}:something": CostSummary(
             key=f"autoloop:{cfg.project}:something",
             total=15.0,
             count=1,
-            entries=[],
+            entries=entries,
         )
     }
     budget = AutoloopBudget(cfg=cfg, state=state, tracker=tracker, first_iter_ts=None)
