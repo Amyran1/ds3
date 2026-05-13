@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import logging
 import re
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -283,6 +285,18 @@ async def _outer_loop(
         iter_rec.ts_end = datetime.now(tz=timezone.utc).isoformat()
 
         state.append_iteration(iter_rec)
+
+        commit_sha = _commit_iteration(
+            project_root=args.project_root,
+            project=args.project,
+            iter_id=iter_id,
+            brainstorm_id=top.id if top is not None else None,
+            family_name=top.feature_family_name_hint if top is not None else None,
+            metric=iter_rec.executor.harness_metric if iter_rec.executor else None,
+            lift=iter_rec.executor.lift if iter_rec.executor else None,
+        )
+        if commit_sha:
+            logger.info("autoloop iter %d committed as %s", iter_id, commit_sha[:8])
 
         slack.notify_milestone(cfg, iter_id, iter_rec, snap)
 
@@ -667,6 +681,123 @@ def _write_final_report(
     out_path = state.state_dir / "FINAL_REPORT.md"
     out_path.write_text(content)
     logger.info("Final report written to %s", out_path)
+
+
+def _commit_iteration(
+    *,
+    project_root: Path,
+    project: str,
+    iter_id: int,
+    brainstorm_id: str | None,
+    family_name: str | None,
+    metric: float | None,
+    lift: float | None,
+) -> str | None:
+    # Scope-limited: only paths matching the autoloop allowlist are ever staged — never git-add -A.
+    allowlist_globs = [
+        f"projects/{project}/features/*/*/**",
+        f"projects/{project}/features/*/**",
+        f"projects/{project}/runs/run_*.py",
+        f"projects/{project}/runs/run_*/**",
+        f"projects/{project}/runs/results.jsonl",
+        f"projects/{project}/runs/eda_results.jsonl",
+        f"projects/{project}/runs/discovery_results.jsonl",
+        f"projects/{project}/runs/CHAMPION.md",
+        f"projects/{project}/autoloop/brainstorm.jsonl",
+        f"projects/{project}/autoloop/iterations.jsonl",
+        f"projects/{project}/autoloop/budget.json",
+        f"projects/{project}/autoloop/failure_modes.jsonl",
+        f"projects/{project}/autoloop/idea_registry.md",
+        f"projects/{project}/autoloop/logs/iter_*.jsonl",
+    ]
+
+    try:
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if status_proc.returncode != 0:
+            logger.warning("auto-commit failed: git status returned %d", status_proc.returncode)
+            return None
+
+        dirty_paths: set[str] = set()
+        for line in status_proc.stdout.splitlines():
+            if len(line) < 3:
+                continue
+            path = line[3:].strip()
+            if path:
+                dirty_paths.add(path)
+
+        to_add: list[str] = []
+        seen: set[str] = set()
+        for dirty in dirty_paths:
+            for glob in allowlist_globs:
+                if fnmatch.fnmatch(dirty, glob) and dirty not in seen:
+                    to_add.append(dirty)
+                    seen.add(dirty)
+                    break
+
+        if not to_add:
+            logger.info("no autoloop-scope changes to commit for iter %d", iter_id)
+            return None
+
+        add_proc = subprocess.run(
+            ["git", "add", "--", *to_add],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if add_proc.returncode != 0:
+            logger.warning(
+                "auto-commit failed: git add returned %d: %s", add_proc.returncode, add_proc.stderr
+            )
+            return None
+
+        metric_str = f"{metric:.4f}" if metric is not None else "?"
+        lift_str = f"{lift:+.4f}" if lift is not None else "?"
+        family_str = family_name or "no-family"
+        bid_str = brainstorm_id or "?"
+        message = (
+            f"autoloop iter {iter_id}: {family_str} ({bid_str})\n\n"
+            f"metric={metric_str} lift={lift_str}\n\n"
+            f"Auto-committed by libs.autoloop.supervisor."
+        )
+
+        commit_proc = subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if commit_proc.returncode != 0:
+            logger.warning(
+                "auto-commit failed: git commit returned %d: %s",
+                commit_proc.returncode,
+                commit_proc.stderr,
+            )
+            return None
+
+        sha_proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if sha_proc.returncode != 0:
+            logger.warning("auto-commit failed: git rev-parse returned %d", sha_proc.returncode)
+            return None
+
+        return sha_proc.stdout.strip()
+
+    except Exception as err:
+        logger.warning("auto-commit failed: %s", err)
+        return None
 
 
 def _finalize_iter_rec(iter_rec: IterationRecord, budget: AutoloopBudget) -> IterationRecord:

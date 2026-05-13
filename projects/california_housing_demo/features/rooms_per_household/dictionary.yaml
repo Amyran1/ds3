@@ -1,0 +1,28 @@
+feature_set:
+  name: rooms_per_household
+  version: v1
+  recipe_version: rooms_per_household_v1
+  row_keys:
+    - name: row_id
+      dtype: int64
+  n_rows: 20640
+  cache_module: projects.california_housing_demo.features.rooms_per_household.cache
+  local_path: null
+  remote_path: null
+  local_path_reason: in-memory only; 20640-row vectorized division on sklearn dataset
+  source_versions:
+    sklearn_california_housing: pinned via project deps
+  source_fingerprints:
+    sklearn_california_housing: sha256:unpinned-stub
+  code_version: git:autoloop-iter-1
+  features:
+    - name: rooms_per_occupant
+      dtype: float64
+      semantic_type: numeric
+      description: >
+        AveRooms / AveOccup per census block group. AveRooms is already
+        rooms-per-household; AveOccup is mean occupants per household; the
+        ratio is rooms-per-occupant (a per-person density measure). Feature
+        family name preserved from brainstorm BS-2026-05-13-r1h001.
+      null_policy: no nulls expected; sklearn dataset guarantees AveOccup > 0
+      leakage_notes: pre-outcome inputs only; no temporal leakage path.
