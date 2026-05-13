@@ -155,7 +155,7 @@ async def _outer_loop(
             )
             event(
                 f"TERMINATE · reason={verdict.reason} · iters_used={snap.iterations_used}"
-                f" · dollars_used=${snap.dollars_used:.2f}"
+                f" · api_spend=${snap.dollars_used:.2f}"
             )
             slack.notify_termination(cfg, verdict.reason or "unknown", snap)
             _write_final_report(state, cfg, verdict, snap)
@@ -192,7 +192,7 @@ async def _outer_loop(
             f"iter {iter_id}/{cfg.budget.iterations_max} · start"
             f" · queue={queue_size}"
             f" · phase={decision.phase.lower()}"
-            f" · cumulative=${_iter_start_snap.dollars_used:.2f}/${_iter_start_snap.dollars_max:.2f}"
+            f" · api_spend=${_iter_start_snap.dollars_used:.2f}/${_iter_start_snap.dollars_max:.2f}"
         )
 
         event(f"iter {iter_id}/{cfg.budget.iterations_max} · planner.spawn")
@@ -209,7 +209,7 @@ async def _outer_loop(
                 event(
                     f"iter {iter_id}/{cfg.budget.iterations_max} · planner.crashed"
                     f" · kill_reason={planner_result.kill_reason}"
-                    f" · ${planner_result.dollars:.2f}"
+                    f" · cli_est=${planner_result.dollars:.2f}"
                     f" · {fmt_dur(planner_result.wall_seconds)}"
                 )
             else:
@@ -218,7 +218,7 @@ async def _outer_loop(
                     f"iter {iter_id}/{cfg.budget.iterations_max} · planner.done"
                     f" · added={planner_result.brainstorm_added}"
                     f" reranked={planner_result.brainstorm_reranked}"
-                    f" · ${planner_result.dollars:.2f}"
+                    f" · cli_est=${planner_result.dollars:.2f}"
                     f" · {fmt_dur(planner_result.wall_seconds)}"
                     f" · exit={planner_result.kill_reason or 'normal'}"
                 )
@@ -297,7 +297,7 @@ async def _outer_loop(
                 event(
                     f"iter {iter_id}/{cfg.budget.iterations_max} · executor.crashed"
                     f" · kill_reason={executor_result.kill_reason}"
-                    f" · ${executor_result.dollars:.2f}"
+                    f" · cli_est=${executor_result.dollars:.2f}"
                     f" · {fmt_dur(executor_result.wall_seconds)}"
                 )
             else:
@@ -326,7 +326,7 @@ async def _outer_loop(
                     f"iter {iter_id}/{cfg.budget.iterations_max} · executor.done"
                     f" · run_id={executor_result.run_id or 'NA'}"
                     f" · metric={_metric_str}"
-                    f" · ${executor_result.dollars:.2f}"
+                    f" · cli_est=${executor_result.dollars:.2f}"
                     f" · {fmt_dur(executor_result.wall_seconds)}"
                     f" · outcome={_outcome}"
                 )
@@ -416,7 +416,7 @@ async def _outer_loop(
         _total_wall = _iter_end_snap.wall_seconds_used
         event(
             f"iter {iter_id}/{cfg.budget.iterations_max} · iter.done"
-            f" · cumulative=${_iter_end_snap.dollars_used:.2f}/${_iter_end_snap.dollars_max:.2f}"
+            f" · api_spend=${_iter_end_snap.dollars_used:.2f}/${_iter_end_snap.dollars_max:.2f}"
             f" · wall={fmt_dur(_iter_wall)}/{fmt_dur(_total_wall)}"
         )
 
