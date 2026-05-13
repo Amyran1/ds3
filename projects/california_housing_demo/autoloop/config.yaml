@@ -5,8 +5,8 @@ primary_metric: r2
 metric_direction: higher_is_better
 sample_frac: 0.10
 gap_finder:
-  cadence: never
-  n: 5
+  cadence: every_n
+  n: 1
   champion_only: true
 budget:
   iterations_max: 15
