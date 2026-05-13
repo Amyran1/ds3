@@ -3,6 +3,7 @@ outcome_variable: median_house_value
 comparison_group: california_housing_v1
 primary_metric: r2
 metric_direction: higher_is_better
+goal_metric: 0.70
 sample_frac: 0.10
 gap_finder:
   cadence: every_n
