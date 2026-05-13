@@ -34,7 +34,7 @@ from entities.civic_shout_user_emails.cache import cache as _user_emails_cache
 from libs.cache.entity_cache import EntityCache
 
 EMAILS_VERSION: int = 1
-USER_EMAILS_VERSION: int = 2
+USER_EMAILS_VERSION: int = 3
 
 
 class _DataAccessor:

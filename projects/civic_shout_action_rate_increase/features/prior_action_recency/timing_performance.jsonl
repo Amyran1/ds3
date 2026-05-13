@@ -1,0 +1,2 @@
+{"feature_family": "prior_action_recency", "version": 1, "tier": "1pct", "rows": 1291905, "wall_seconds": 6.52, "fraction": 0.01, "ts": "2026-05-13T17:38:45Z", "git": "0646a86"}
+{"feature_family": "prior_action_recency", "version": 1, "tier": "full", "rows": 129190540, "wall_seconds": 47.31, "fraction": null, "ts": "2026-05-13T18:20:49Z", "git": "e3aae56"}

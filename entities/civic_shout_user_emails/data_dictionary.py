@@ -1,4 +1,4 @@
-"""Column semantics for civic_shout_user_emails (v1, v2)."""
+"""Column semantics for civic_shout_user_emails (v1, v2, v3)."""
 
 from __future__ import annotations
 
@@ -89,9 +89,60 @@ V2_DICTIONARY: dict[str, str] = {
 }
 
 
+V3_DICTIONARY: dict[str, str] = {
+    "user_id": (
+        "Recipient user ID. Primary key component. From email_activities where action_type='sent'."
+    ),
+    "email_id": (
+        "Email ID. Primary key component. From email_activities where action_type='sent'."
+    ),
+    "date_sent": (
+        "UTC timestamp of the send event. From email_activities.created_at "
+        "where action_type='sent'."
+    ),
+    "opened": (
+        "True iff any email_activities row with action_type='open' exists for "
+        "(user_id, email_id), OR clicked=True (raw), OR v2 actioned=True. "
+        "Inherited from v2 base columns — v2's imputation rule "
+        "(actioned=True ⇒ opened=True) is baked into these values even though v3 "
+        "has no actioned column. F03's drop rule still applies under v3."
+    ),
+    "verified_opened": (
+        "Same as `opened`. Mongo collapses Redshift's `verified_open` → `OPEN` "
+        "(bot-filtered) so the distinction does not exist in source data. "
+        "Inherited from v2 base columns with v2's imputation baked in. "
+        "F03's drop rule still applies under v3."
+    ),
+    "clicked": (
+        "True iff any email_activities row with action_type='click' exists for "
+        "(user_id, email_id). Inherited from v2 base columns — v2's imputation "
+        "(actioned=True ⇒ clicked=True) is baked into these values even though "
+        "v3 has no actioned column. F03's drop rule still applies under v3."
+    ),
+    "unsubscribed": (
+        "True iff this email was attributed as the cause of an unsubscribe event — "
+        "i.e., an unsub event from content_routing.subscription_state_events is "
+        "attributed to this email via join_asof with a 7-day cap. Inherited from "
+        "v2 base columns. This is NOT 'user is currently unsubscribed'."
+    ),
+    "n_actions_24h": (
+        "Count of distinct petition signatures attributed to this (user, email) "
+        "pair via backward asof-join with 24h tolerance against user_petition v1. "
+        "UInt32. Zero for pairs with no signature within 24h of the send. "
+        "99th percentile per non-zero pair: ~3-5."
+    ),
+    "actioned_24h": (
+        "Boolean: True iff n_actions_24h >= 1. Pooled positive rate 9.26% across "
+        "the full 24-month dataset (2024-04-21 → 2026-04-20). Replaces v2's "
+        "`actioned` boolean as the canonical target for civic_shout_action_rate_increase."
+    ),
+}
+
+
 VERSIONS: dict[int, dict[str, str]] = {
     1: V1_DICTIONARY,
     2: V2_DICTIONARY,
+    3: V3_DICTIONARY,
 }
 
 

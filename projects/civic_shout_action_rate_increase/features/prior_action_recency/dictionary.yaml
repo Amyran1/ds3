@@ -1,0 +1,20 @@
+feature_family: prior_action_recency
+version: v1
+row_keys: [user_id, email_id]
+date_column: date_sent
+feature_cols:
+  - actioned_last_1
+  - actioned_last_3
+  - actioned_last_5
+  - actioned_last_10
+  - sends_since_last_action
+  - action_in_last_5
+  - is_in_action_streak  # length >= 3 of consecutive actioned sends
+  - lifetime_actions_prior
+provenance: F08 + F10 EDA findings (recency cluster — dominant signal)
+target_alignment: built from actioned_24h (v3); not actioned (v2-deprecated)
+null_policy: fill_null(0) inside harness; explicit zero for first send per user
+leakage_audit: shift(1).over(user_id) applied before any window aggregate; enforced by a deterministic unit test in tests/projects/civic_shout_action_rate_increase/test_harness.py
+build_script: features/prior_action_recency/create_cache_v1.py
+data_dependency:
+  - entities/civic_shout_user_emails v3 (specifically the actioned_24h column)

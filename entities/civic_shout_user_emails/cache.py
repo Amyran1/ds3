@@ -15,21 +15,31 @@ v2 (correct baseline):
     clicks (Apple-MPP-safe). Real action rate baseline ~9.76% (24-mo pooled).
     See V2_DICTIONARY in data_dictionary.py.
 
-Shared schema (both versions):
+v3 (24h backward attribution):
+    Derived from civic_shout_user_emails v2 base columns (user_id, email_id,
+    date_sent, opened, verified_opened, clicked, unsubscribed — NOT actioned)
+    joined against user_petition v1 via a backward asof-join with 24h tolerance.
+    Replaces v2's ``actioned`` column with ``n_actions_24h: UInt32`` and
+    ``actioned_24h: Boolean``. Pooled positive rate: ~9.26% (24-mo). The
+    opened/clicked/verified_opened columns inherit v2's imputation values; the
+    F03 drop rule still applies under v3. See V3_DICTIONARY in data_dictionary.py.
+
+v3 schema:
     user_id:          i64
     email_id:         i64
     date_sent:        datetime[us, UTC]
-    opened:           bool   -- imputation rule differs by version
+    opened:           bool
     verified_opened:  bool
     clicked:          bool
-    actioned:         bool   -- attribution-window differs by version
     unsubscribed:     bool
+    n_actions_24h:    u32
+    actioned_24h:     bool
 
 Usage::
 
     from entities.civic_shout_user_emails.cache import cache
 
-    df = cache.get(2)  # use v2 for any modeling work
+    df = cache.get(3)  # use v3 for civic_shout_action_rate_increase modeling
 """
 
 from __future__ import annotations
@@ -58,5 +68,6 @@ cache = _UserEmailsCache(
     versions={
         1: VersionMeta(key="civic_shout_user_emails_v1", fmt="parquet"),
         2: VersionMeta(key="civic_shout_user_emails_v2", fmt="parquet"),
+        3: VersionMeta(key="civic_shout_user_emails_v3", fmt="parquet"),
     },
 )

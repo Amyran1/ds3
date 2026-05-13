@@ -22,6 +22,10 @@ projects/civic_shout_actions_routing_2/**/__pycache__/
 projects_v2/**/runs/**/*.parquet
 projects_v2/**/features/**/*.parquet
 
+# Civic Shout action rate increase: run prediction artifacts + local feature parquet (regenerate via run scripts)
+projects/civic_shout_action_rate_increase/runs/**/artifacts/*.parquet
+projects/civic_shout_action_rate_increase/features/**/*.parquet
+
 # Oversized / mis-generated EDA artifact (do not commit multi-GB HTML)
 projects_v2/civic_shout_content_routing/features/recency_decayed_contrastive_per_channel_v1/eda.html
 
