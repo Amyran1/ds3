@@ -1,0 +1,34 @@
+outcome_name: actioned_24h_per_send
+version: v1
+base_dataset:
+  source: civic_shout_user_emails
+  version: 3
+row_keys: [user_id, email_id]
+target_column: actioned_24h
+target_dtype: bool
+target_definition: |
+  True iff the user signed at least one petition within 24 hours after this
+  email's send_time. Built via backward asof-join with 24h tolerance against
+  user_petition v1; the most-recent-prior send within 24h gets credit. The
+  v3 cache also exposes n_actions_24h (uint32 count) as a reference column —
+  not used as target in v1; count-target is a deferred follow-up trigger.
+  Decision recorded in memory: project_civic_shout_24h_attribution (2026-05-13).
+positive_rate_pooled_v3_full: 0.0926
+positive_rate_pre_migration_v2: 0.0987
+cohort_aging_warning: |
+  F01 documented 198% pooled-drift attribution to cohort aging. Pooled rates
+  are mechanically suppressed by new-cohort dilution. Harness reports
+  per-tenure-bucket residualized AUC as the per-stratum view, and quarterly
+  walk-forward provides per-quarter residualized AUCs in the ledger row.
+evaluation_population_id: civic_shout_user_emails_v3_full
+date_column: date_sent
+held_out_columns_dropped_by_harness: [opened, clicked, verified_opened]
+held_out_reason: |
+  F03 (executed against v2 data; re-verified under v3 with shares 71%/25%/71%) —
+  these flags are 25-71% purely imputed from the (v2) action label, which v3
+  inherits verbatim on its base columns. The harness raises ValueError if any
+  of these appear in feature_cols.
+n_actions_24h_reference_column: |
+  uint32 count of attributed signatures per (user, email) pair within the 24h
+  window. Held for diagnostics (cold-start filtering, count-distribution audit).
+  Not a feature. Not the target.

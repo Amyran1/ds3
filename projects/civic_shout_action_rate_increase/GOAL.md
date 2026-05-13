@@ -4,32 +4,32 @@ Our goal is to increase the number of total petitions signed per email sent by ~
 
 Civic Shout sends one email every day to their users who are active in the last 30 days.
 
-## Baseline (24 months, 2024-04-21 → 2026-04-20)
+## Baseline (v3 cache — 24 h attribution window)
 
-Source: `entities/civic_shout_user_emails` v2 — pins `attributed_actions` v2 (uncapped, 24-month window) + the raw-click → opened imputation.
+Source: `entities/civic_shout_user_emails` v3 — pins `actioned_24h` (24-hour attribution window). See memory note `~/.claude/projects/-Users-aaronmyran-dev-ds3/memory/project_civic_shout_24h_attribution.md`.
 
-| Period | Sends | Actioned | **Action rate** | Unsub rate |
-|---|---:|---:|---:|---:|
-| 2024 (Apr–Dec) | 39,852,143 | 3,161,165 | **7.93%** | 0.362% |
-| 2025 (full) | 70,164,233 | 7,179,107 | **10.23%** | 0.375% |
-| 2026 (Jan–Apr) | 19,174,164 | 2,413,032 | **12.58%** | 0.400% |
-| **Pooled** | **129,190,540** | **12,753,304** | **9.87%** | **0.375%** |
+| Metric | Value |
+|---|---|
+| Pooled action rate | **9.26%** |
+| Attribution window | 24 hours |
+| Cache version | v3 (`actioned_24h`) |
 
-`actioned` = the (user, email) pair was attributed as the most-recent-prior send before that user signed a petition (via `attributed_actions` v2, last-touch attribution, uncapped because Civic Shout's daily cadence makes the cap a no-op for ~99% of sends).
-
-The year-over-year action rate is **monotone-increasing** (7.93% → 10.23% → 12.58%). Whether that's real audience-engagement growth, tracking improvements, or a Civic Shout product change (e.g., signing-flow simplification) is an **open question** — it determines whether the pooled (9.87%) or recent (12.58%) baseline is the right one to chase.
+The year-over-year action rate is **monotone-increasing** across 2024–2026 cohorts. Whether that reflects real audience-engagement growth, tracking improvements, or a Civic Shout product change is an **open question** — it determines whether the pooled or recent baseline is the right one to chase.
 
 ## Target translation
 
-A 10% lift means:
+A 10% relative lift on the v3 baseline:
 
 | Anchor | Target | Absolute add |
 |---|---|---|
-| Pooled 9.87% | 10.86% (+0.99pp) | ~+1.28M attributed signatures over a 24-mo equivalent window |
-| 2026 12.58% | 13.84% (+1.26pp) | ~+241K attributed signatures across 2026's Jan–Apr send volume; ~+720K extrapolated to a full year |
+| Pooled 9.26% | **10.19%** (+0.93pp) | ~10% more attributed signatures over the evaluation window |
+
+### AUC scale target
+
+The current 5% ship-run (smoke scope) reports a residualized AUC of **0.6755**. The harness primary-metric target is a **10% relative lift**: **0.6755 × 1.10 = 0.7430**.
 
 ## Open data questions affecting the target
 
-1. **Year-over-year drift**: confirm whether 7.93% → 12.58% reflects real growth or tracking changes. If tracking-driven, the real baseline is closer to 12.58% throughout and the 2024–2025 numbers are under-counted.
+1. **Year-over-year drift**: confirm whether action-rate growth across 2024–2026 cohorts reflects real growth or tracking changes. If tracking-driven, the recent cohort rate is a better anchor than the pooled 9.26%.
 2. **`exclude_last_send=True` in attributed_actions**: each user's most-recent send is excluded from attribution until their *next* send arrives. For a daily sender, this slightly suppresses the latest-day rate. Worth a one-off check to confirm impact.
 3. **The 67% email-attribution rate**: across 24 months, 67% of *all* signatures attribute to a send within the window. That makes email the dominant signature channel and validates the project premise — but the other 33% (organic, shares, off-platform) aren't influenced by changes to email content/targeting.

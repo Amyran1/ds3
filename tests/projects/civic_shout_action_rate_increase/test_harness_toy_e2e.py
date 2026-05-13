@@ -12,6 +12,7 @@ from sklearn.metrics import roc_auc_score
 from projects.civic_shout_action_rate_increase.harness import (
     CivicShoutHarnessResponse,
     CivicShoutResultRow,
+    ConfoundJoinError,
     ML_Model_Config,
     ML_Model_Type,
     RunResultMetadata,
@@ -19,6 +20,7 @@ from projects.civic_shout_action_rate_increase.harness import (
 )
 from tests.projects.civic_shout_action_rate_increase._fixtures import (
     FEATURE_COLS,
+    make_sparse_confound_fixture,
     make_synthetic_features_equal_to_confound,
     make_synthetic_user_emails,
 )
@@ -236,11 +238,28 @@ def test_future_leak_audit_passes(full_response: CivicShoutHarnessResponse):
 
 def test_rejects_F03_forbidden_columns():
     df = make_synthetic_user_emails(seed=42)
-    bad_cols = ["opened"] + FEATURE_COLS
-    df_with_bad = df.with_columns(pl.lit(0).alias("opened"))
-    with pytest.raises(ValueError) as exc_info:
-        harness(df_with_bad, bad_cols, _MODEL_CONFIG)
-    assert "F03" in str(exc_info.value)
+    all_forbidden = [
+        "opened",
+        "clicked",
+        "verified_opened",
+        "actioned",
+        "actioned_24h",
+        "n_actions_24h",
+        "unsubscribed",
+    ]
+    df_extended = df.with_columns(
+        pl.lit(0).cast(pl.Int8).alias("opened"),
+        pl.lit(0).cast(pl.Int8).alias("clicked"),
+        pl.lit(0).cast(pl.Int8).alias("verified_opened"),
+        pl.lit(0).cast(pl.Int8).alias("actioned"),
+        pl.lit(0).cast(pl.Int32).alias("n_actions_24h"),
+        pl.lit(0).cast(pl.Int8).alias("unsubscribed"),
+    )
+    for forbidden_col in all_forbidden:
+        bad_cols = [forbidden_col] + FEATURE_COLS
+        with pytest.raises(ValueError) as exc_info:
+            harness(df_extended, bad_cols, _MODEL_CONFIG)
+        assert "F03" in str(exc_info.value), f"Expected F03 in error for col {forbidden_col!r}"
 
 
 def test_predictions_parquet_written_and_valid(full_response_with_preds):
@@ -297,3 +316,83 @@ def test_deterministic_same_seed_e2e():
 def test_smoke_lt_30_seconds():
     elapsed = time.perf_counter() - _SUITE_START
     assert elapsed < 150, f"Suite wall time {elapsed:.1f}s exceeded 150s budget"
+
+
+def test_confound_join_row_count_mismatch_raises():
+    df = make_synthetic_user_emails(seed=42)
+    dup_row = df.head(1)
+    df_dup = pl.concat([df, dup_row])
+    with pytest.raises(ConfoundJoinError):
+        harness(df_dup, FEATURE_COLS, _MODEL_CONFIG)
+
+
+def test_confound_join_duplicate_key_raises():
+    df = make_synthetic_user_emails(seed=42)
+    first_row = df.head(1)
+    first_row_flipped = first_row.with_columns(
+        (1 - pl.col("actioned_24h")).cast(pl.Int8).alias("actioned_24h")
+    )
+    df_dup = pl.concat([df, first_row_flipped])
+    with pytest.raises(ConfoundJoinError):
+        harness(df_dup, FEATURE_COLS, _MODEL_CONFIG)
+
+
+def test_confound_overlap_flags_sparse_support():
+    df = make_sparse_confound_fixture(seed=99)
+    r = harness(df, FEATURE_COLS, _MODEL_CONFIG, sample_frac=0.005, sample_seed=42)
+    diag_map = {d.name: d for d in r.diagnostics}
+
+    overlap_diags = [d for d in r.diagnostics if d.name.startswith("confound_overlap_")]
+    assert len(overlap_diags) > 0
+
+    summary_diag = diag_map.get("confound_overlap_min_across_folds")
+    assert summary_diag is not None
+
+    assert any(d.severity == "warning" for d in overlap_diags), (
+        f"Expected at least one warning in overlap diags, got: {[(d.name, d.severity) for d in overlap_diags]}"
+    )
+
+    assert summary_diag.values.get("n_cells_below_threshold", 0) > 0
+
+    row = r.to_result_row(
+        RunResultMetadata(
+            run_id="test_sparse",
+            project="civic_shout_action_rate_increase",
+            comparison_group="test",
+            scope="smoke",
+        )
+    )
+    assert isinstance(row, CivicShoutResultRow)
+    assert row.confound_overlap_n_cells_below_threshold is not None
+    assert row.confound_overlap_n_cells_below_threshold > 0
+
+
+def test_class_balance_excludes_sparse_cells():
+    df = make_synthetic_user_emails(seed=42)
+    user_ids_arr = df["user_id"].to_numpy()
+    actioned_arr = df["actioned_24h"].to_numpy().copy()
+
+    mask_new_users = user_ids_arr < 50
+    actioned_arr[mask_new_users] = 0
+
+    df_sparse = df.with_columns(pl.Series("actioned_24h", actioned_arr, dtype=pl.Int8))
+
+    r = harness(df_sparse, FEATURE_COLS, _MODEL_CONFIG, sample_seed=42)
+    diag_map = {d.name: d for d in r.diagnostics}
+
+    cb_diag = diag_map.get("class_balance")
+    assert cb_diag is not None
+    assert cb_diag.severity == "error", f"Expected error severity, got {cb_diag.severity}"
+    assert cb_diag.values.get("n_cells_excluded", 0) > 0
+
+    row = r.to_result_row(
+        RunResultMetadata(
+            run_id="test_sparse_cb",
+            project="civic_shout_action_rate_increase",
+            comparison_group="test",
+            scope="smoke",
+        )
+    )
+    assert isinstance(row, CivicShoutResultRow)
+    assert row.class_balance_n_cells_excluded is not None
+    assert row.class_balance_n_cells_excluded > 0

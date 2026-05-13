@@ -307,6 +307,10 @@ class CivicShoutResultRow(RunResultRow):
     residual_collapse_flag: bool | None = None
     pooled_positive_rate_train: float | None = None
     pooled_positive_rate_test: float | None = None
+    confound_overlap_min_positives_per_cell: int | None = None
+    confound_overlap_n_cells_below_threshold: int | None = None
+    class_balance_min_positives_per_cell: int | None = None
+    class_balance_n_cells_excluded: int | None = None
 
 
 class CivicShoutHarnessResponse(HarnessResponse):
@@ -381,6 +385,16 @@ class CivicShoutHarnessResponse(HarnessResponse):
             "residual_collapse_flag": bool(
                 _diag_val("residual_collapse_check", "collapsed") or False
             ),
+            "confound_overlap_min_positives_per_cell": _diag_val(
+                "confound_overlap_min_across_folds", "min_positives_per_cell"
+            ),
+            "confound_overlap_n_cells_below_threshold": _diag_val(
+                "confound_overlap_min_across_folds", "n_cells_below_threshold"
+            ),
+            "class_balance_min_positives_per_cell": _diag_val(
+                "class_balance", "min_positives_per_cell"
+            ),
+            "class_balance_n_cells_excluded": _diag_val("class_balance", "n_cells_excluded"),
         }
 
         for label, col in tenure_map.items():
@@ -911,6 +925,131 @@ def _residualize_single_confound(
 
 
 # ---------------------------------------------------------------------------
+# Confound overlap diagnostic
+# ---------------------------------------------------------------------------
+
+
+def _compute_confound_overlap_diagnostic(
+    fold_label: str,
+    c_u_test: np.ndarray,
+    c_e_test: np.ndarray,
+    y_test: np.ndarray,
+    n_quartiles: int = 4,
+    min_positives_threshold: int = 100,
+) -> HarnessDiagnostic:
+    """4×4 joint quartile positive-count diagnostic on a single test fold."""
+    u_unique = len(np.unique(c_u_test))
+    e_unique = len(np.unique(c_e_test))
+    if u_unique < n_quartiles or e_unique < n_quartiles:
+        return HarnessDiagnostic(
+            name=f"confound_overlap_{fold_label}",
+            severity="info",
+            message=f"Confound has < {n_quartiles} distinct test-fold values; quartile binning collapsed",
+            values={
+                "fold": fold_label,
+                "n_cells_below_threshold": 0,
+                "min_positives_per_cell": int(y_test.sum()),
+            },
+        )
+
+    q_u = np.quantile(c_u_test, np.linspace(0, 1, n_quartiles + 1))
+    q_e = np.quantile(c_e_test, np.linspace(0, 1, n_quartiles + 1))
+
+    u_bin = np.searchsorted(q_u[1:-1], c_u_test, side="right")
+    e_bin = np.searchsorted(q_e[1:-1], c_e_test, side="right")
+
+    cell_counts = np.zeros((n_quartiles, n_quartiles), dtype=np.int64)
+    np.add.at(cell_counts, (u_bin, e_bin), y_test.astype(np.int64))
+
+    n_cells_below = int((cell_counts < min_positives_threshold).sum())
+    min_pos = int(cell_counts.min())
+
+    sev: Literal["info", "warning"] = "warning" if n_cells_below > 0 else "info"
+    return HarnessDiagnostic(
+        name=f"confound_overlap_{fold_label}",
+        severity=sev,
+        message=(
+            f"Fold {fold_label}: {n_cells_below}/{n_quartiles**2} confound overlap cells "
+            f"have < {min_positives_threshold} positives (min={min_pos})"
+        ),
+        values={
+            "fold": fold_label,
+            "n_cells_below_threshold": n_cells_below,
+            "min_positives_per_cell": min_pos,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cell-level class balance diagnostic
+# ---------------------------------------------------------------------------
+
+
+def _compute_cell_class_balance_diagnostic(
+    all_test_dfs: list[pl.DataFrame],
+    y_all: np.ndarray,
+    tenure_all: np.ndarray,
+    min_positives_threshold: int = 5,
+) -> tuple[HarnessDiagnostic, set[tuple[str, str]]]:
+    """Per-(tenure_bucket, prior_action_bin) positive count on the test fold.
+
+    Returns the diagnostic and the set of excluded (tenure, prior_action_bin) cells.
+    """
+    combined = pl.concat(all_test_dfs)
+    prior_action_col = (
+        combined["lifetime_actions_prior"] if "lifetime_actions_prior" in combined.columns else None
+    )
+
+    prior_action_bins_labels = _PRIOR_ACTION_LABELS
+
+    def _bin_prior(val: int) -> str:
+        for i, bound in enumerate(_PRIOR_ACTION_BINS[1:]):
+            if val < bound:
+                return prior_action_bins_labels[i]
+        return prior_action_bins_labels[-1]
+
+    if prior_action_col is not None:
+        prior_vals = prior_action_col.to_numpy()
+        prior_bin_arr = np.array([_bin_prior(int(v)) for v in prior_vals])
+    else:
+        prior_bin_arr = np.full(len(y_all), "0")
+
+    cell_positives: dict[tuple[str, str], int] = {}
+    for t_label in _TENURE_LABELS:
+        for p_label in prior_action_bins_labels:
+            cell_positives[(t_label, p_label)] = 0
+
+    for i in range(len(y_all)):
+        key = (str(tenure_all[i]), str(prior_bin_arr[i]))
+        if key in cell_positives:
+            cell_positives[key] += int(y_all[i])
+
+    excluded: set[tuple[str, str]] = {
+        k for k, v in cell_positives.items() if v < min_positives_threshold
+    }
+    n_excluded = len(excluded)
+    min_pos = min(cell_positives.values()) if cell_positives else 0
+
+    sev: Literal["info", "error"] = "error" if n_excluded > 0 else "info"
+    return (
+        HarnessDiagnostic(
+            name="class_balance",
+            severity=sev,
+            message=(
+                f"{n_excluded}/{len(cell_positives)} (tenure×prior_action) cells excluded "
+                f"(< {min_positives_threshold} positives); min positives per cell = {min_pos}"
+            ),
+            values={
+                "n_cells_excluded": n_excluded,
+                "min_positives_per_cell": min_pos,
+                "excluded_cells": [f"{t}|{p}" for t, p in sorted(excluded)],
+            },
+        ),
+        excluded,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public harness
 # ---------------------------------------------------------------------------
 
@@ -937,6 +1076,10 @@ def harness(
 
     cpu_count = os.cpu_count() or 8
     inner_threads = max(cpu_count - 1, 1)
+
+    _is_smoke = sample_frac is not None and sample_frac <= 0.01
+    _confound_overlap_threshold = 25 if _is_smoke else 100
+    _class_balance_threshold = 50 if _is_smoke else 5
 
     # ------------------------------------------------------------------
     # Stage 1: column_selection
@@ -983,7 +1126,7 @@ def harness(
     # Preserve the full frame for the leakage audit before sampling narrows it.
     # The audit re-derives scores from strictly-prior rows; on a sample it would
     # miss most prior history and produce false positives on high-volume users.
-    full_work_df = work_df.join(
+    _confound_joined = work_df.join(
         confound_df.select(
             [
                 "user_id",
@@ -995,7 +1138,16 @@ def harness(
         ),
         on=["user_id", "email_id", "date_sent"],
         how="left",
-    ).with_columns(
+    )
+    _null_user = _confound_joined["user_prior_engagement_score"].is_null().sum()
+    _null_email = _confound_joined["email_popularity_score"].is_null().sum()
+    if _null_user > 0 or _null_email > 0:
+        raise ConfoundJoinError(
+            f"Confound left-join left {_null_user} null user_prior_engagement_score "
+            f"and {_null_email} null email_popularity_score rows. "
+            "Some work_df (user_id, email_id, date_sent) keys have no match in confound_df."
+        )
+    full_work_df = _confound_joined.with_columns(
         pl.col("user_prior_engagement_score").fill_null(0.0),
         pl.col("email_popularity_score").fill_null(0.5),
     )
@@ -1156,6 +1308,15 @@ def harness(
         ci_high = float(np.quantile(boot_aucs, 0.975))
 
         t_score_total += time.perf_counter() - t_score_start
+
+        fold_overlap_diag = _compute_confound_overlap_diagnostic(
+            fold_label=q_label,
+            c_u_test=c_u_test,
+            c_e_test=c_e_test,
+            y_test=y_test,
+            min_positives_threshold=_confound_overlap_threshold,
+        )
+        diagnostics.append(fold_overlap_diag)
 
         fold_results.append(
             {
@@ -1341,8 +1502,20 @@ def harness(
             tenure_psi_vals.append(psi)
     max_tenure_psi = float(max(tenure_psi_vals)) if tenure_psi_vals else 0.0
 
-    # Per-stratum AUC CV
-    stratum_auc_vals = [v for v in tenure_aucs.values() if v is not None]
+    # Cell-level class balance: per-(tenure_bucket, prior_action_bin) positive counts
+    cell_balance_diag, excluded_cells = _compute_cell_class_balance_diagnostic(
+        all_test_dfs=[r["test_df"] for r in fold_results],
+        y_all=y_all,
+        tenure_all=tenure_all,
+        min_positives_threshold=_class_balance_threshold,
+    )
+
+    # Per-stratum AUC CV — drop excluded (tenure, prior_action_bin) cells from CV
+    stratum_auc_vals = [
+        v
+        for label, v in tenure_aucs.items()
+        if v is not None and not any(label == t for t, _ in excluded_cells)
+    ]
     stratum_cv = (
         float(np.std(stratum_auc_vals) / np.mean(stratum_auc_vals))
         if len(stratum_auc_vals) >= 2 and np.mean(stratum_auc_vals) != 0
@@ -1355,7 +1528,7 @@ def harness(
     # Residual collapse check
     residual_collapsed = primary_value < 0.505
 
-    # Class balance
+    # Pooled positive rates (kept for to_result_row; pooled_positive_rate_* fields)
     positive_rate_test = float(np.mean(y_all))
     positive_rate_train = float(np.mean(train_y_all))
 
@@ -1363,6 +1536,38 @@ def harness(
     n_test_users = len(np.unique(user_ids_all))
     n_test_emails = int(all_test_dfs["email_id"].n_unique())
     n_test_rows = len(y_all)
+
+    # Confound overlap summary across folds
+    fold_overlap_diags = [d for d in diagnostics if d.name.startswith("confound_overlap_")]
+    _overlap_min_positives = [
+        d.values.get("min_positives_per_cell", 0)
+        for d in fold_overlap_diags
+        if isinstance(d.values.get("min_positives_per_cell"), int)
+    ]
+    _overlap_min = min(_overlap_min_positives) if _overlap_min_positives else None
+    _overlap_n_cells_below = sum(
+        d.values.get("n_cells_below_threshold", 0)
+        for d in fold_overlap_diags
+        if isinstance(d.values.get("n_cells_below_threshold"), int)
+    )
+    _overlap_summary_sev: Literal["info", "warning"] = (
+        "warning" if any(d.severity == "warning" for d in fold_overlap_diags) else "info"
+    )
+    diagnostics.append(
+        HarnessDiagnostic(
+            name="confound_overlap_min_across_folds",
+            severity=_overlap_summary_sev,
+            message=(
+                f"Confound overlap summary: min positives/cell across folds = {_overlap_min}, "
+                f"total cells below threshold = {_overlap_n_cells_below}"
+            ),
+            values={
+                "min_positives_per_cell": _overlap_min,
+                "n_cells_below_threshold": _overlap_n_cells_below,
+                "threshold": _confound_overlap_threshold,
+            },
+        )
+    )
 
     # Assemble diagnostics
     psi_sev: Literal["info", "warning", "error"] = (
@@ -1431,17 +1636,7 @@ def harness(
         )
     )
 
-    diagnostics.append(
-        HarnessDiagnostic(
-            name="class_balance",
-            severity="info",
-            message=f"Positive rate — train: {positive_rate_train:.4f}, test: {positive_rate_test:.4f}",
-            values={
-                "positive_rate_train": positive_rate_train,
-                "positive_rate_test": positive_rate_test,
-            },
-        )
-    )
+    diagnostics.append(cell_balance_diag)
 
     cpu_util = float(np.mean(cpu_util_samples)) if cpu_util_samples else None
     if cpu_util is not None and cpu_util < 50:

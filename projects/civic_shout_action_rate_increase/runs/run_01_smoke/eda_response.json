@@ -1,0 +1,242 @@
+{
+  "schema_version": "eda/v1",
+  "findings": [
+    {
+      "id": "outcome_distribution_positive_rate",
+      "title": "Positive rate: 0.0927",
+      "severity": "info",
+      "score": 0.09267986054810362,
+      "description": "n_rows=1290194, n_positives=119575, n_negatives=1170619",
+      "metadata": {
+        "n_positives": "119575",
+        "positive_rate": "0.09267986054810362"
+      }
+    },
+    {
+      "id": "outcome_distribution_class_imbalance",
+      "title": "Class imbalance ratio: 9.79",
+      "severity": "info",
+      "score": 9.789830650219528,
+      "description": "max_class=1170619, min_class=119575",
+      "metadata": {
+        "imbalance_ratio": "9.789830650219528"
+      }
+    },
+    {
+      "id": "univariate_categorical_action_in_last_5",
+      "title": "action_in_last_5: cardinality=2, missingness=0.000",
+      "severity": "info",
+      "score": 0.0,
+      "description": "Top values: [(False, '0.763'), (True, '0.237')]",
+      "metadata": {
+        "col": "action_in_last_5",
+        "cardinality": "2"
+      }
+    },
+    {
+      "id": "univariate_categorical_is_in_action_streak",
+      "title": "is_in_action_streak: cardinality=2, missingness=0.000",
+      "severity": "info",
+      "score": 0.0,
+      "description": "Top values: [(False, '0.980'), (True, '0.020')]",
+      "metadata": {
+        "col": "is_in_action_streak",
+        "cardinality": "2"
+      }
+    },
+    {
+      "id": "row_alignment_audit_pass",
+      "title": "Row alignment audit passed",
+      "severity": "info",
+      "score": 0.0,
+      "description": "Row keys unique; no nulls in row keys or outcome.",
+      "metadata": {}
+    },
+    {
+      "id": "eda_cohort_baseline_2024",
+      "title": "Cohort 2024: rate=0.0716, n_rows=398261",
+      "severity": "info",
+      "score": 1.0,
+      "description": "relative_lift=1.000",
+      "metadata": {
+        "cohort": "2024",
+        "positive_rate": "0.07162388483933903",
+        "n_rows": "398261",
+        "relative_lift": "1.0"
+      }
+    },
+    {
+      "id": "eda_cohort_baseline_2025",
+      "title": "Cohort 2025: rate=0.0974, n_rows=701799",
+      "severity": "info",
+      "score": 1.3594394527261882,
+      "description": "relative_lift=1.359",
+      "metadata": {
+        "cohort": "2025",
+        "positive_rate": "0.09736833480811458",
+        "n_rows": "701799",
+        "relative_lift": "1.3594394527261882"
+      }
+    },
+    {
+      "id": "eda_cohort_baseline_2026",
+      "title": "Cohort 2026: rate=0.1195, n_rows=190134",
+      "severity": "warning",
+      "score": 1.668143163426224,
+      "description": "relative_lift=1.668",
+      "metadata": {
+        "cohort": "2026",
+        "positive_rate": "0.11947889383277058",
+        "n_rows": "190134",
+        "relative_lift": "1.668143163426224"
+      }
+    }
+  ],
+  "scores": {
+    "outcome_prevalence": 0.09267986054810362,
+    "drift_score": 0.0,
+    "n_findings_warning": 1,
+    "n_findings_error": 0,
+    "top_finding_id": "outcome_distribution_positive_rate"
+  },
+  "performance": {
+    "total_seconds": 4.687638790986966,
+    "stage_timings": [
+      {
+        "stage": "outcome_distribution",
+        "seconds": 0.033311500010313466
+      },
+      {
+        "stage": "univariate_numeric",
+        "seconds": 0.00003487500362098217
+      },
+      {
+        "stage": "univariate_categorical",
+        "seconds": 0.05776433399296366
+      },
+      {
+        "stage": "feature_outcome_correlation",
+        "seconds": 0.000029750022804364562
+      },
+      {
+        "stage": "feature_feature_correlation",
+        "seconds": 0.00001841600169427693
+      },
+      {
+        "stage": "missingness_pattern",
+        "seconds": 4.520622542011552
+      },
+      {
+        "stage": "row_alignment_audit",
+        "seconds": 0.024941666022641584
+      },
+      {
+        "stage": "eda_cohort_baseline",
+        "seconds": 0.05082508301711641
+      }
+    ]
+  },
+  "outcome_version": "v1",
+  "fingerprint": "",
+  "method_results": [
+    {
+      "name": "outcome_distribution",
+      "seconds": 0.033311500010313466,
+      "n_findings": 2,
+      "artifact_paths": [
+        "runs/eda_scratch/artifacts/eda/outcome_distribution.png"
+      ],
+      "skipped": false,
+      "skip_reason": ""
+    },
+    {
+      "name": "univariate_numeric",
+      "seconds": 0.00003487500362098217,
+      "n_findings": 0,
+      "artifact_paths": [],
+      "skipped": false,
+      "skip_reason": ""
+    },
+    {
+      "name": "univariate_categorical",
+      "seconds": 0.05776433399296366,
+      "n_findings": 2,
+      "artifact_paths": [
+        "runs/eda_scratch/artifacts/eda/univariate_categorical.png"
+      ],
+      "skipped": false,
+      "skip_reason": ""
+    },
+    {
+      "name": "feature_outcome_correlation",
+      "seconds": 0.000029750022804364562,
+      "n_findings": 0,
+      "artifact_paths": [],
+      "skipped": false,
+      "skip_reason": ""
+    },
+    {
+      "name": "feature_feature_correlation",
+      "seconds": 0.00001841600169427693,
+      "n_findings": 0,
+      "artifact_paths": [],
+      "skipped": false,
+      "skip_reason": ""
+    },
+    {
+      "name": "missingness_pattern",
+      "seconds": 4.520622542011552,
+      "n_findings": 0,
+      "artifact_paths": [
+        "runs/eda_scratch/artifacts/eda/missingness_pattern.png"
+      ],
+      "skipped": false,
+      "skip_reason": ""
+    },
+    {
+      "name": "row_alignment_audit",
+      "seconds": 0.024941666022641584,
+      "n_findings": 1,
+      "artifact_paths": [],
+      "skipped": false,
+      "skip_reason": ""
+    },
+    {
+      "name": "eda_cohort_baseline",
+      "seconds": 0.05082508301711641,
+      "n_findings": 3,
+      "artifact_paths": [
+        "runs/eda_scratch/artifacts/eda/eda_cohort_baseline.png"
+      ],
+      "skipped": false,
+      "skip_reason": ""
+    }
+  ],
+  "eda_summary": {
+    "n_findings_total": 8,
+    "n_findings_by_severity": {
+      "info": 7,
+      "warning": 1,
+      "error": 0
+    },
+    "outcome_positive_rate": 0.09267986054810362,
+    "feature_feature_max_abs_pearson": null,
+    "cohort_drift_max_relative_lift": 1.668143163426224
+  },
+  "data_profile": {
+    "n_rows": 1290194,
+    "n_features": 8,
+    "feature_cols": [
+      "actioned_last_1",
+      "actioned_last_3",
+      "actioned_last_5",
+      "actioned_last_10",
+      "sends_since_last_action",
+      "action_in_last_5",
+      "is_in_action_streak",
+      "lifetime_actions_prior"
+    ],
+    "sample_frac": 0.01,
+    "sample_seed": 42
+  }
+}

@@ -24,6 +24,7 @@ from projects.civic_shout_action_rate_increase.harness import (
     RunResultMetadata,
     harness,
 )
+from projects.civic_shout_action_rate_increase.runs.manifest_helper import emit_manifest
 
 _RUNS_DIR = Path(__file__).parent
 _LEDGER = _RUNS_DIR / "results.jsonl"
@@ -99,7 +100,7 @@ def main(
         project="civic_shout_action_rate_increase",
         comparison_group=comparison_group,
         scope=scope,  # type: ignore[arg-type]
-        recorded_at_utc=datetime.now(timezone.utc),
+        recorded_at_utc=datetime.now(timezone.utc).isoformat(),
         git_sha=_git_sha(),
         data_fingerprint=None,
     )
@@ -123,6 +124,8 @@ def main(
         f.write(row.model_dump_json() + "\n")
 
     (run_dir / "harness_response.json").write_text(response.model_dump_json(indent=2))
+
+    emit_manifest(metadata, response, run_dir)
 
     print(
         f"[{run_id}] primary={response.summary.primary_metric_value:.4f} "

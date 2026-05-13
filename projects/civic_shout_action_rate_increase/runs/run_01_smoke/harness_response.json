@@ -566,70 +566,70 @@
     ]
   },
   "performance": {
-    "total_seconds": 193.00010550001753,
+    "total_seconds": 200.0925898749847,
     "stage_timings": [
       {
         "stage": "column_selection",
-        "seconds": 0.06320287499693222,
+        "seconds": 0.058548000000882894,
         "owner": "harness",
         "calls": 1,
         "notes": []
       },
       {
         "stage": "data_conversion",
-        "seconds": 34.84810579198529,
+        "seconds": 34.89060879198951,
         "owner": "harness",
         "calls": 1,
         "notes": []
       },
       {
         "stage": "split_generation",
-        "seconds": 0.06661312500364147,
+        "seconds": 0.05604737499379553,
         "owner": "harness",
         "calls": 8,
         "notes": []
       },
       {
         "stage": "fit",
-        "seconds": 30.126467625028454,
+        "seconds": 30.85797924999497,
         "owner": "model",
         "calls": 8,
         "notes": []
       },
       {
         "stage": "predict",
-        "seconds": 0.2986690830148291,
+        "seconds": 0.3005081250157673,
         "owner": "model",
         "calls": 8,
         "notes": []
       },
       {
         "stage": "score",
-        "seconds": 93.49325021001277,
+        "seconds": 97.13169533098699,
         "owner": "harness",
         "calls": 8,
         "notes": []
       },
       {
         "stage": "aggregate",
-        "seconds": 34.06608445799793,
+        "seconds": 36.74927462497726,
         "owner": "harness",
         "calls": 1,
         "notes": []
       }
     ],
     "bottleneck_stage": "score",
-    "rows_per_second": 668.4918625600869,
-    "folds_per_second": 0.04145075454375476,
-    "harness_owned_seconds": 162.53725645999657,
-    "model_owned_seconds": 30.425136708043283,
+    "rows_per_second": 644.7964918671372,
+    "folds_per_second": 0.03998149059392103,
+    "harness_owned_seconds": 168.88617412294843,
+    "model_owned_seconds": 31.158487375010736,
     "peak_memory_mb": null,
     "parallelism": {
       "outer_n_jobs": 1,
       "inner_threads": 27,
       "backend": "sequential",
       "cpu_count_observed": 28,
-      "cpu_utilization_pct": 726.3666666666667,
+      "cpu_utilization_pct": 713.9666666666666,
       "notes": []
     },
     "hardware": "local cpu",
@@ -666,6 +666,86 @@
       }
     },
     {
+      "name": "confound_overlap_2024-Q3",
+      "severity": "warning",
+      "message": "Fold 2024-Q3: 10/16 confound overlap cells have < 25 positives (min=0)",
+      "values": {
+        "fold": "2024-Q3",
+        "n_cells_below_threshold": 10,
+        "min_positives_per_cell": 0
+      }
+    },
+    {
+      "name": "confound_overlap_2024-Q4",
+      "severity": "warning",
+      "message": "Fold 2024-Q4: 9/16 confound overlap cells have < 25 positives (min=0)",
+      "values": {
+        "fold": "2024-Q4",
+        "n_cells_below_threshold": 9,
+        "min_positives_per_cell": 0
+      }
+    },
+    {
+      "name": "confound_overlap_2025-Q1",
+      "severity": "warning",
+      "message": "Fold 2025-Q1: 7/16 confound overlap cells have < 25 positives (min=0)",
+      "values": {
+        "fold": "2025-Q1",
+        "n_cells_below_threshold": 7,
+        "min_positives_per_cell": 0
+      }
+    },
+    {
+      "name": "confound_overlap_2025-Q2",
+      "severity": "warning",
+      "message": "Fold 2025-Q2: 5/16 confound overlap cells have < 25 positives (min=4)",
+      "values": {
+        "fold": "2025-Q2",
+        "n_cells_below_threshold": 5,
+        "min_positives_per_cell": 4
+      }
+    },
+    {
+      "name": "confound_overlap_2025-Q3",
+      "severity": "warning",
+      "message": "Fold 2025-Q3: 6/16 confound overlap cells have < 25 positives (min=4)",
+      "values": {
+        "fold": "2025-Q3",
+        "n_cells_below_threshold": 6,
+        "min_positives_per_cell": 4
+      }
+    },
+    {
+      "name": "confound_overlap_2025-Q4",
+      "severity": "warning",
+      "message": "Fold 2025-Q4: 7/16 confound overlap cells have < 25 positives (min=2)",
+      "values": {
+        "fold": "2025-Q4",
+        "n_cells_below_threshold": 7,
+        "min_positives_per_cell": 2
+      }
+    },
+    {
+      "name": "confound_overlap_2026-Q1",
+      "severity": "warning",
+      "message": "Fold 2026-Q1: 5/16 confound overlap cells have < 25 positives (min=5)",
+      "values": {
+        "fold": "2026-Q1",
+        "n_cells_below_threshold": 5,
+        "min_positives_per_cell": 5
+      }
+    },
+    {
+      "name": "confound_overlap_2026-Q2",
+      "severity": "warning",
+      "message": "Fold 2026-Q2: 11/16 confound overlap cells have < 25 positives (min=0)",
+      "values": {
+        "fold": "2026-Q2",
+        "n_cells_below_threshold": 11,
+        "min_positives_per_cell": 0
+      }
+    },
+    {
       "name": "future_leak_audit",
       "severity": "info",
       "message": "Strict-causality audit passed for user_prior_engagement_score: n_audited=1000, max_diff=0.00e+00",
@@ -683,6 +763,16 @@
         "n_audited": 1000,
         "max_diff": 0.0,
         "score_col": "email_popularity_score"
+      }
+    },
+    {
+      "name": "confound_overlap_min_across_folds",
+      "severity": "warning",
+      "message": "Confound overlap summary: min positives/cell across folds = 0, total cells below threshold = 60",
+      "values": {
+        "min_positives_per_cell": 0,
+        "n_cells_below_threshold": 60,
+        "threshold": 25
       }
     },
     {
@@ -704,9 +794,9 @@
     {
       "name": "per_stratum_auc_dispersion",
       "severity": "info",
-      "message": "CV of residualized AUC across tenure buckets: 0.0184",
+      "message": "CV of residualized AUC across tenure buckets: 0.0000",
       "values": {
-        "cv": 0.018378090732631837
+        "cv": 0.0
       }
     },
     {
@@ -737,11 +827,37 @@
     },
     {
       "name": "class_balance",
-      "severity": "info",
-      "message": "Positive rate — train: 0.0841, test: 0.0941",
+      "severity": "error",
+      "message": "24/35 (tenure×prior_action) cells excluded (< 50 positives); min positives per cell = 0",
       "values": {
-        "positive_rate_train": 0.08414324815146304,
-        "positive_rate_test": 0.09413286298513412
+        "n_cells_excluded": 24,
+        "min_positives_per_cell": 0,
+        "excluded_cells": [
+          "1-2yr|0",
+          "1-2yr|1",
+          "1-2yr|2-4",
+          "1-2yr|5-19",
+          "181-365d|0",
+          "181-365d|1",
+          "181-365d|2-4",
+          "181-365d|5-19",
+          "2yr+|0",
+          "2yr+|1",
+          "2yr+|2-4",
+          "2yr+|20+",
+          "2yr+|5-19",
+          "31-90d|0",
+          "31-90d|1",
+          "31-90d|2-4",
+          "8-30d|0",
+          "8-30d|1",
+          "8-30d|2-4",
+          "8-30d|5-19",
+          "91-180d|0",
+          "91-180d|1",
+          "91-180d|2-4",
+          "91-180d|5-19"
+        ]
       }
     }
   ],

@@ -121,15 +121,19 @@ def _check_harness(project_root: Path, project: str) -> PrereqResult:
 
 def _check_eda(project_root: Path, project: str) -> PrereqResult:
     path = project_root / "projects" / project / "eda.py"
+    pkg_path = project_root / "projects" / project / "eda" / "__init__.py"
     content, err = _read_text(path)
-    if content is None:
-        return PrereqResult(
-            name="eda.py present",
-            status="fail",
-            detail=err,
-            fix_hint="Implement the project EDA via the `eda` skill.",
-        )
-    if "def eda(" not in content:
+    if content is None or "def eda(" not in content:
+        pkg_content, pkg_err = _read_text(pkg_path)
+        if pkg_content is not None and "def eda(" in pkg_content:
+            return PrereqResult(name="eda.py present", status="ok")
+        if content is None:
+            return PrereqResult(
+                name="eda.py present",
+                status="fail",
+                detail=err,
+                fix_hint="Implement the project EDA via the `eda` skill.",
+            )
         return PrereqResult(
             name="eda.py present",
             status="fail",

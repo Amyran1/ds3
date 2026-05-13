@@ -1,0 +1,12 @@
+{
+  "iterations_used": 0,
+  "iterations_max": 15,
+  "dollars_used": 0.0,
+  "dollars_max": 100.0,
+  "wall_seconds_used": 0.0,
+  "wall_seconds_max": 7200,
+  "last_top3_run_ids": [],
+  "last_top3_metrics": [],
+  "iters_since_top3_change": 0,
+  "updated_at": "2026-05-13T00:00:00+00:00"
+}

@@ -29,7 +29,8 @@ VENV_ACTIVATE := .venv/bin/activate
 .PHONY: help \
         autoloop autoloop-once autoloop-dashboard autoloop-render \
         autoloop-prereqs autoloop-status autoloop-stop \
-        dev-setup install-deps
+        dev-setup install-deps \
+        leaderboard-civic-shout leaderboard-render-civic-shout
 
 # ─── Help ──────────────────────────────────────────────────────────────────
 
@@ -108,3 +109,11 @@ dev-setup:
 
 install-deps:
 	@. $(VENV_ACTIVATE) && uv pip install -r uv.lock
+
+# ─── Leaderboard ───────────────────────────────────────────────────────────
+
+leaderboard-civic-shout:
+	@. $(VENV_ACTIVATE) && python -m libs.leaderboard civic_shout_action_rate_increase --watch --port $(PORT)
+
+leaderboard-render-civic-shout:
+	@. $(VENV_ACTIVATE) && python tmp/visualize/civic_shout_action_rate_increase/render_leaderboard.py

@@ -166,4 +166,45 @@ def make_synthetic_features_equal_to_confound(seed: int = 42) -> pl.DataFrame:
     return _build_sends(rng, n_users=2000, n_emails=40, include_recency=False)
 
 
+def make_sparse_confound_fixture(seed: int = 99) -> pl.DataFrame:
+    """Fixture that forces one joint (user_prior, email_popularity) quartile to have < 25 positives.
+
+    The top-user × top-email quartile is forced sparse by constraining a subset
+    of high-propensity users to only interact with low-quality emails, leaving
+    the top-user × top-email cell with very few positives.
+    """
+    rng = np.random.default_rng(seed)
+    base = _build_sends(rng, n_users=2000, n_emails=40, include_recency=True)
+
+    # Identify the top-quartile users (highest lifetime_actions_prior) and
+    # top-quartile emails (email_id in top 25%). Force those user rows to use
+    # only low-quality email_ids (bottom 25%) so positives in that cell are sparse.
+    n_users = 2000
+    n_emails = 40
+    top_user_threshold = int(n_users * 0.75)
+    top_email_threshold = int(n_emails * 0.75)
+
+    # For rows where user_id >= top_user_threshold AND email_id >= top_email_threshold,
+    # remap email_id to bottom-quartile emails and set actioned_24h = 0.
+    def _force_sparse(row_email_id: int, row_user_id: int, row_actioned: int) -> tuple[int, int]:
+        if row_user_id >= top_user_threshold and row_email_id >= top_email_threshold:
+            # Remap to bottom-quartile email and suppress outcome
+            return (row_email_id % top_email_threshold), 0
+        return row_email_id, row_actioned
+
+    email_ids = base["email_id"].to_numpy().copy()
+    actioned = base["actioned_24h"].to_numpy().copy()
+    user_ids = base["user_id"].to_numpy()
+
+    for i in range(len(email_ids)):
+        email_ids[i], actioned[i] = _force_sparse(
+            int(email_ids[i]), int(user_ids[i]), int(actioned[i])
+        )
+
+    return base.with_columns(
+        pl.Series("email_id", email_ids, dtype=pl.Int32),
+        pl.Series("actioned_24h", actioned, dtype=pl.Int8),
+    )
+
+
 FEATURE_COLS = _FEATURE_COLS
