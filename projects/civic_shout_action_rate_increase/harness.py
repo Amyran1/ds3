@@ -355,7 +355,7 @@ class CivicShoutHarnessResponse(HarnessResponse):
             "walk_forward_n_folds": len(fold_aucs) if fold_aucs else None,
             "walk_forward_fold_aucs": fold_aucs,
             "walk_forward_fold_labels": fold_labels or None,
-            "walk_forward_fold_std": float(np.std(fold_aucs)) if fold_aucs else None,
+            "walk_forward_fold_std": float(np.std(fold_aucs, ddof=1)) if fold_aucs else None,
             "walk_forward_fold_min": float(min(fold_aucs)) if fold_aucs else None,
             "walk_forward_fold_max": float(max(fold_aucs)) if fold_aucs else None,
             "bootstrap_method": "user_block_500",
@@ -587,10 +587,12 @@ def _compute_residualized_auc_cross_fit(
     c_u_test: np.ndarray,
     c_e_test: np.ndarray,
     seed: int = 42,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, np.ndarray]:
     """Two-way cross-fit sequential isotonic residualization.
 
-    Returns (auc_residualized, auc_direction_a, auc_direction_b).
+    Returns (auc_residualized, auc_direction_a, auc_direction_b, s_resid_xfit).
+    s_resid_xfit is aligned to the input row order: each row's residual is
+    the output of the smoother fitted on the half it was NOT in.
     """
     rng = np.random.default_rng(seed)
     n = len(y_test)
@@ -637,15 +639,19 @@ def _compute_residualized_auc_cross_fit(
     resid_b = _residualize_sequential(s_a, c_u_a, c_e_a, s_b, c_u_b, c_e_b)
     resid_a = _residualize_sequential(s_b, c_u_b, c_e_b, s_a, c_u_a, c_e_a)
 
+    s_resid_xfit = np.empty_like(s_test)
+    s_resid_xfit[half_a_idx] = resid_a
+    s_resid_xfit[half_b_idx] = resid_b
+
     if len(np.unique(y_b)) < 2 or len(np.unique(y_a)) < 2:
-        return 0.5, 0.5, 0.5
+        return 0.5, 0.5, 0.5, s_resid_xfit
 
     auc_b = float(roc_auc_score(y_b, resid_b))
     auc_a = float(roc_auc_score(y_a, resid_a))
 
     n_a, n_b = len(half_a_idx), len(half_b_idx)
     auc_combined = (n_a * auc_a + n_b * auc_b) / (n_a + n_b)
-    return auc_combined, auc_a, auc_b
+    return auc_combined, auc_a, auc_b, s_resid_xfit
 
 
 # ---------------------------------------------------------------------------
@@ -659,27 +665,86 @@ def _user_block_bootstrap(
     user_ids: np.ndarray,
     n_boot: int = 500,
     seed: int = 42,
-    c_u: np.ndarray | None = None,
-    c_e: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Sample whole users with replacement, recompute AUC per resample."""
+    """Sample whole users with replacement, preserving multiplicity, recompute AUC per resample."""
     rng = np.random.default_rng(seed)
     unique_users = np.unique(user_ids)
-    boot_aucs = np.empty(n_boot)
 
+    sort_idx = np.argsort(user_ids, kind="stable")
+    sorted_users = user_ids[sort_idx]
+    boundaries = np.searchsorted(sorted_users, unique_users, side="left")
+    boundaries_end = np.searchsorted(sorted_users, unique_users, side="right")
+    user_to_rows: dict = {
+        u: sort_idx[boundaries[i] : boundaries_end[i]] for i, u in enumerate(unique_users)
+    }
+
+    boot_aucs = np.empty(n_boot)
     for i in range(n_boot):
         sampled_users = rng.choice(unique_users, size=len(unique_users), replace=True)
-        mask = np.isin(user_ids, sampled_users)
-        if mask.sum() == 0:
-            boot_aucs[i] = 0.5
-            continue
-        y_b, s_b = y[mask], s_resid[mask]
+        row_indices = np.concatenate([user_to_rows[u] for u in sampled_users])
+        y_b = y[row_indices]
+        s_b = s_resid[row_indices]
         if len(np.unique(y_b)) < 2:
             boot_aucs[i] = 0.5
             continue
         boot_aucs[i] = float(roc_auc_score(y_b, s_b))
 
     return boot_aucs
+
+
+def _pooled_user_block_bootstrap_mean_of_folds(
+    fold_results: list[dict],
+    n_boot: int = 500,
+    seed: int = 42,
+) -> tuple[float, float]:
+    """Cluster-bootstrap the mean-across-folds AUC estimator.
+
+    Cluster unit = user (a user can appear in multiple folds' test sets).
+    Each replicate resamples users globally with replacement, recomputes
+    each fold's AUC using only the rows belonging to sampled users in
+    that fold (with multiplicity preserved), then takes the mean of the
+    per-fold AUCs. CI = quantiles of replicate statistics.
+    """
+    rng = np.random.default_rng(seed)
+
+    all_user_ids = np.concatenate([r["user_ids"] for r in fold_results])
+    unique_users = np.unique(all_user_ids)
+
+    fold_user_to_rows: list[dict] = []
+    for r in fold_results:
+        uids = r["user_ids"]
+        sort_idx = np.argsort(uids, kind="stable")
+        sorted_uids = uids[sort_idx]
+        fold_unique = np.unique(uids)
+        starts = np.searchsorted(sorted_uids, fold_unique, side="left")
+        ends = np.searchsorted(sorted_uids, fold_unique, side="right")
+        fold_user_to_rows.append(
+            {u: sort_idx[starts[i] : ends[i]] for i, u in enumerate(fold_unique)}
+        )
+
+    replicate_stats = np.empty(n_boot)
+    for b in range(n_boot):
+        sampled_users = rng.choice(unique_users, size=len(unique_users), replace=True)
+        fold_aucs_replicate: list[float] = []
+        for r, u_to_rows in zip(fold_results, fold_user_to_rows):
+            chunks = [u_to_rows[u] for u in sampled_users if u in u_to_rows]
+            if not chunks:
+                continue
+            row_idx = np.concatenate(chunks)
+            y_b = r["y_test"][row_idx]
+            s_b = r["s_resid"][row_idx]
+            if len(np.unique(y_b)) < 2:
+                continue
+            fold_aucs_replicate.append(float(roc_auc_score(y_b, s_b)))
+        if not fold_aucs_replicate:
+            replicate_stats[b] = 0.5
+        else:
+            replicate_stats[b] = float(np.mean(fold_aucs_replicate))
+
+    return (
+        float(np.quantile(replicate_stats, 0.025)),
+        float(np.quantile(replicate_stats, 0.975)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1059,31 +1124,13 @@ def harness(
             except LeakageError:
                 raise
 
-        auc_residualized, auc_dir_a, auc_dir_b = _compute_residualized_auc_cross_fit(
+        auc_residualized, auc_dir_a, auc_dir_b, s_resid_xfit = _compute_residualized_auc_cross_fit(
             y_test, s_test, c_u_test, c_e_test, seed=42
         )
 
-        # User block bootstrap for this fold
         user_ids_test = test_df["user_id"].to_numpy()
 
-        # Compute residualized scores for the full test set (needed for bootstrap)
-        from scipy.stats import rankdata as _rankdata
-
-        def _full_resid(s: np.ndarray, c_u: np.ndarray, c_e: np.ndarray) -> np.ndarray:
-            r_u = _rankdata(c_u, method="average") / len(c_u)
-            r_e = _rankdata(c_e, method="average") / len(c_e)
-            iso_u = IsotonicRegression(out_of_bounds="clip")
-            iso_u.fit(r_u, s)
-            s_hat_u = iso_u.predict(r_u)
-            resid = s - s_hat_u
-            iso_e = IsotonicRegression(out_of_bounds="clip")
-            iso_e.fit(r_e, resid)
-            s_hat_e = iso_e.predict(r_e)
-            return s - s_hat_u - s_hat_e
-
-        s_resid_full = _full_resid(s_test, c_u_test, c_e_test)
-
-        boot_aucs = _user_block_bootstrap(y_test, s_resid_full, user_ids_test, n_boot=500, seed=42)
+        boot_aucs = _user_block_bootstrap(y_test, s_resid_xfit, user_ids_test, n_boot=500, seed=42)
         ci_low = float(np.quantile(boot_aucs, 0.025))
         ci_high = float(np.quantile(boot_aucs, 0.975))
 
@@ -1099,7 +1146,7 @@ def harness(
                 "ci_high": ci_high,
                 "y_test": y_test,
                 "s_test": s_test,
-                "s_resid": s_resid_full,
+                "s_resid": s_resid_xfit,
                 "c_u_test": c_u_test,
                 "c_e_test": c_e_test,
                 "user_ids": user_ids_test,
@@ -1114,7 +1161,7 @@ def harness(
             test_df.with_columns(
                 [
                     pl.Series("score", s_test),
-                    pl.Series("score_residualized", s_resid_full),
+                    pl.Series("score_residualized", s_resid_xfit),
                     pl.lit(q_label).alias("fold"),
                     pl.Series(
                         "row_loss",
@@ -1152,17 +1199,13 @@ def harness(
     fold_aucs = [r["auc_residualized"] for r in fold_results]
     fold_labels = [r["q_label"] for r in fold_results]
     primary_value = float(np.mean(fold_aucs))
-    fold_std = float(np.std(fold_aucs)) if len(fold_aucs) > 1 else 0.0
+    fold_std = float(np.std(fold_aucs, ddof=1)) if len(fold_aucs) > 1 else 0.0
 
-    # t-based CI across folds
     k = len(fold_aucs)
     if k > 1:
-        from scipy import stats as scipy_stats
-
-        se = fold_std / np.sqrt(k)
-        t_crit = float(scipy_stats.t.ppf(0.975, df=k - 1))
-        primary_ci_low = primary_value - t_crit * se
-        primary_ci_high = primary_value + t_crit * se
+        primary_ci_low, primary_ci_high = _pooled_user_block_bootstrap_mean_of_folds(
+            fold_results, n_boot=500, seed=42
+        )
     else:
         primary_ci_low = fold_results[0]["ci_low"]
         primary_ci_high = fold_results[0]["ci_high"]
