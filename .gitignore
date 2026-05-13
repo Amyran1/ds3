@@ -27,3 +27,6 @@ projects_v2/civic_shout_content_routing/features/recency_decayed_contrastive_per
 
 # Civic Shout content routing exploration (large parquet; regenerate locally)
 data/projects/civic_shout_content_routing/exploration/wide_engagement.parquet
+
+# Adversarial review / second-opinion artifacts
+second-opinions/
