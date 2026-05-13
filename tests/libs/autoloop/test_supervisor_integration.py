@@ -215,7 +215,7 @@ def test_iter_cap_termination(fake_project: Path) -> None:
 
     from libs.autoloop.prereqs import PrereqResult
 
-    _git_clean_ok = PrereqResult(name="git working tree clean", passed=True)
+    _git_clean_ok = PrereqResult(name="git working tree clean", status="ok")
 
     planner_result = PlannerResult(
         role="planner",
@@ -355,7 +355,7 @@ def test_manual_stop_file(fake_project: Path) -> None:
 
     args = SupervisorArgs(project="demo", project_root=fake_project)
 
-    _git_clean_ok = PrereqResult(name="git working tree clean", passed=True)
+    _git_clean_ok = PrereqResult(name="git working tree clean", status="ok")
 
     with (
         patch("libs.autoloop.supervisor.Container", return_value=_FakeContainer()),

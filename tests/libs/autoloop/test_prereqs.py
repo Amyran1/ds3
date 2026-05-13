@@ -248,3 +248,38 @@ def test_format_table_with_color_contains_ansi(
     table = report.format_table(use_color=True)
 
     assert "\033[" in table
+
+
+def test_prereq_catches_invalid_cadence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_root = _build_complete_tree(tmp_path)
+    _mock_git_clean(monkeypatch, project_root)
+
+    config_path = project_root / "projects" / "proj" / "autoloop" / "config.yaml"
+    config_path.write_text(
+        "project: proj\n"
+        "outcome_variable: y\n"
+        "comparison_group: cg\n"
+        "primary_metric: roc_auc\n"
+        "gap_finder:\n"
+        "  cadence: every_n\n"
+    )
+
+    report = check_prereqs(project_root, "proj")
+
+    assert not report.all_passed
+    schema_failures = [f for f in report.failed if "schema validation" in f.name]
+    assert schema_failures, "Expected schema validation to fail for invalid cadence value"
+    assert "cadence" in schema_failures[0].detail
+
+
+def test_prereq_warns_on_missing_goal_metric(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = _build_complete_tree(tmp_path)
+    _mock_git_clean(monkeypatch, project_root)
+
+    report = check_prereqs(project_root, "proj")
+
+    assert report.all_passed, [f.name + ": " + f.detail for f in report.failed]
+    warn_names = [w.name for w in report.warned]
+    assert "goal_metric set in config.yaml" in warn_names
