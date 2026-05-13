@@ -1,0 +1,9 @@
+name: median_house_value
+version: v1
+description: "Target column from sklearn fetch_california_housing — median house value in $100k."
+unit: "100k_usd"
+direction: higher_is_better
+population:
+  description: "All rows in sklearn California Housing dataset"
+  n_rows: 20640
+  filters: []

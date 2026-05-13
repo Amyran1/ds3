@@ -1,0 +1,2 @@
+{"_managed_by": "libs.ledgers.LedgerWriter", "schema_version": "ledger/v1", "created_at_utc": "2026-05-13T15:39:51.312075+00:00"}
+{"schema":"eda_result_row/v1","project":"california_housing_demo","run_id":"run_01","comparison_group":"california_housing_v1","scope":"comparison","recorded_at_utc":"2026-05-13T15:39:49.853980+00:00","git_sha":"c162890bd136874a1cf95e12cdd1ed3a38f07a9c","eda_outcome_prevalence":null,"eda_drift_score":0.0,"eda_n_findings_warning":0,"eda_n_findings_error":0,"eda_top_finding_id":null,"eda_total_seconds":0.00001645900192670524}
