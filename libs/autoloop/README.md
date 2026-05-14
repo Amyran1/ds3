@@ -128,6 +128,53 @@ All files live under `projects/{name}/autoloop/`.
 
 ---
 
+## Dashboard
+
+The live dashboard refreshes automatically while the autoloop is running. It is served by a small HTTP server that the `scripts/autoloop.sh` script starts alongside the supervisor.
+
+### What it shows
+
+- **Session card** (top): current stage (`idle` / `planning` / `building` / `committing`), wall-clock elapsed, and cumulative API cost.
+- **Metric scatter** (Mockup A): per-iteration primary metric trend with a baseline line, an optional goal line (drawn when `goal_metric` is set in `config.yaml`), and a marker for the best-so-far iteration.
+- **Per-iteration table**: sticky-header table of every iteration row with status icons (✓ success, ✗ fail, ⏳ in progress).
+- **Performance section**: stage-breakdown timing, scaling curve, and per-feature-family throughput.
+- **Brainstorm queue**: clickable rows with ↑ / ↓ / ✕ controls for real-time reordering and rejection.
+
+### How to start it
+
+```bash
+# Recommended: background server, kills any prior server on the port first
+make autoloop-dashboard-restart PROJECT=<name>
+
+# One-command: background server + open browser tab automatically
+make autoloop-up PROJECT=<name>
+
+# Foreground: useful for terminal-pinning or watching server logs directly
+make autoloop-dashboard PROJECT=<name>
+```
+
+`make autoloop` and `make autoloop-once` start the dashboard automatically as a companion process via `scripts/autoloop.sh`; you do not need to run `autoloop-dashboard-restart` separately when using those targets.
+
+### Where the code lives
+
+| File | Purpose |
+|------|---------|
+| `libs/autoloop/dashboard/render.py` | Pure renderer — reads JSONL state files, emits HTML/SVG strings. Entry points: `render_once(...)`, `_render_shell(...)`, `_render_body(...)`. |
+| `libs/autoloop/dashboard/serve.py` | HTTP server — `GET /` returns the page shell, `GET /fragment` returns the polled body, `POST /brainstorm/{id}/{op}` handles user actions. |
+| `scripts/restart-dashboard.sh` | Kill any prior server on the port, start a new background instance. |
+
+### Brainstorm queue interaction model
+
+Each row in the brainstorm queue is whole-row-clickable and opens its detail page (`brainstorm/{id}.html`). The ↑ / ↓ / ✕ buttons modify queue order or soft-delete the item:
+
+- **↑** moves the row exactly one position up in the ranked queue.
+- **↓** moves one position down.
+- **✕** rejects the item (soft-delete — row disappears from the queue; `status=rejected` is appended to the file).
+- All actions append a new row to `brainstorm.jsonl` — the file is event-sourced and never edited in place.
+- `tier_score` is renumbered to evenly-spaced fractions after each click so the displayed rank is always authoritative.
+
+---
+
 ## Configuration reference
 
 All fields are in `projects/{name}/autoloop/config.yaml`.

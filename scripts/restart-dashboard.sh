@@ -25,7 +25,7 @@ done
 sleep 1
 
 # Launch the new server using the venv's python (no activate needed)
-nohup ./.venv/bin/python tmp/visualize/autoloop/serve_dashboard.py \
+nohup ./.venv/bin/python -m libs.autoloop.dashboard.serve \
   --port "$PORT" --project "$PROJECT" >/tmp/dashboard.log 2>&1 &
 disown
 sleep 1.5

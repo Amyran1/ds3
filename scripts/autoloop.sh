@@ -55,25 +55,12 @@ fi
 
 # ─── 3. Start dashboard in background ──────────────────────────────────────
 DASHBOARD_LOG="/tmp/autoloop-dashboard-${PROJECT}.log"
-SERVE_SCRIPT="tmp/visualize/autoloop/serve_dashboard.py"
-WATCH_SCRIPT="tmp/visualize/autoloop/render_dashboard.py"
 
 echo ""
-if [[ -f "$SERVE_SCRIPT" ]]; then
-  echo ">> Starting live dashboard server at http://localhost:$PORT/"
-  python "$SERVE_SCRIPT" --port "$PORT" --project "$PROJECT" > "$DASHBOARD_LOG" 2>&1 &
-  DASHBOARD_PID=$!
-  DASHBOARD_URL="http://localhost:$PORT/"
-elif [[ -f "$WATCH_SCRIPT" ]]; then
-  echo ">> Live server not built yet; using file:// watcher fallback."
-  AUTOLOOP_PROJECT="$PROJECT" python "$WATCH_SCRIPT" --watch > "$DASHBOARD_LOG" 2>&1 &
-  DASHBOARD_PID=$!
-  DASHBOARD_URL="file://$ROOT/tmp/visualize/autoloop/run-dashboard.html"
-else
-  echo ">> No dashboard renderer found. Running autoloop without dashboard." >&2
-  DASHBOARD_PID=""
-  DASHBOARD_URL=""
-fi
+echo ">> Starting live dashboard server at http://localhost:$PORT/"
+python -m libs.autoloop.dashboard.serve --port "$PORT" --project "$PROJECT" > "$DASHBOARD_LOG" 2>&1 &
+DASHBOARD_PID=$!
+DASHBOARD_URL="http://localhost:$PORT/"
 
 cleanup() {
   if [[ -n "${DASHBOARD_PID:-}" ]] && kill -0 "$DASHBOARD_PID" 2>/dev/null; then

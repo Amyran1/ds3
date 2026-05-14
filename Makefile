@@ -27,7 +27,7 @@ VENV_ACTIVATE := .venv/bin/activate
 
 .DEFAULT_GOAL := help
 .PHONY: help \
-        autoloop autoloop-once autoloop-dashboard autoloop-render \
+        autoloop autoloop-once autoloop-dashboard autoloop-dashboard-restart autoloop-up autoloop-render \
         autoloop-prereqs autoloop-status autoloop-stop \
         dev-setup install-deps \
         leaderboard-civic-shout leaderboard-render-civic-shout
@@ -40,7 +40,9 @@ help:
 	@echo "─────────────────────────────────────────────────────────────────"
 	@echo "  make autoloop-once              Single iter + live dashboard"
 	@echo "  make autoloop                   Full run to cap + live dashboard"
-	@echo "  make autoloop-dashboard         Live dashboard only (no autoloop)"
+	@echo "  make autoloop-up                Background dashboard + open browser"
+	@echo "  make autoloop-dashboard         Live dashboard (foreground; terminal-pin)"
+	@echo "  make autoloop-dashboard-restart Restart dashboard server in background"
 	@echo "  make autoloop-render            Render dashboard HTML once"
 	@echo "  make autoloop-prereqs           Check prereqs for current project"
 	@echo "  make autoloop-status            Print current state from JSON files"
@@ -79,15 +81,21 @@ autoloop:
 
 autoloop-dashboard:
 	@. $(VENV_ACTIVATE) && \
-	  if [ -f tmp/visualize/autoloop/serve_dashboard.py ]; then \
-	    python tmp/visualize/autoloop/serve_dashboard.py --port $(PORT) --project $(PROJECT); \
-	  else \
-	    echo "Live server not built yet — falling back to --watch render"; \
-	    AUTOLOOP_PROJECT=$(PROJECT) python tmp/visualize/autoloop/render_dashboard.py --watch; \
-	  fi
+	  python -m libs.autoloop.dashboard.serve --port $(PORT) --project $(PROJECT)
+
+autoloop-dashboard-restart:
+	@./scripts/restart-dashboard.sh $(PROJECT)
+
+autoloop-up:
+	@./scripts/restart-dashboard.sh $(PROJECT)
+	@sleep 1
+	@command -v open >/dev/null 2>&1 && open http://localhost:$(PORT)/ || true
+	@echo ""
+	@echo "Dashboard at http://localhost:$(PORT)/ (logs: tail -f /tmp/dashboard.log)"
+	@echo "Now run autoloop in a separate terminal: make autoloop PROJECT=$(PROJECT)"
 
 autoloop-render:
-	@. $(VENV_ACTIVATE) && AUTOLOOP_PROJECT=$(PROJECT) python tmp/visualize/autoloop/render_dashboard.py --project $(PROJECT)
+	@. $(VENV_ACTIVATE) && python -m libs.autoloop.dashboard.render --project $(PROJECT)
 
 autoloop-prereqs:
 	@. $(VENV_ACTIVATE) && python -m libs.autoloop check-prereqs --project $(PROJECT)
