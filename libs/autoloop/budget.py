@@ -54,6 +54,10 @@ class AutoloopBudget:
         now = datetime.now(tz=timezone.utc)
         return (now - self._first_iter_ts).total_seconds()
 
+    @property
+    def perf_bounty_max_dollars(self) -> float:
+        return self._cfg.budget.perf_bounty_max_dollars
+
     def caps_exceeded(self) -> CapStatus:
         return CapStatus(
             iter_cap_hit=self.iterations_used() >= self._cfg.budget.iterations_max,

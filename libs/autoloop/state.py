@@ -11,6 +11,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from libs.autoloop.perf_bounty import PerfBountyResult
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,6 +76,10 @@ class BudgetCfg(BaseModel):
     wall_seconds_max: int = 86400
     per_session_dollars_max: float = 5.0
     per_session_wall_seconds_max: int = 4200
+    perf_bounty_max_dollars: float = 1.00
+    perf_bounty_enabled: bool = (
+        False  # v1: ship plumbing off-by-default; flip to True after v2 production-path fix
+    )
 
 
 class PlateauCfg(BaseModel):
@@ -319,7 +325,9 @@ class BudgetSnapshot(BaseModel):
 class IterationRecord(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
-    schema_version: Literal["iteration/v1"] = Field(default="iteration/v1", alias="schema")
+    schema_version: Literal["iteration/v1", "iteration/v2"] = Field(
+        default="iteration/v2", alias="schema"
+    )
     iteration_id: int
     ts_start: str
     ts_end: str | None = None
@@ -329,6 +337,7 @@ class IterationRecord(BaseModel):
     budget_after: BudgetSnapshot | None = None
     termination_checks: TerminationCheck = Field(default_factory=TerminationCheck)
     iteration_fingerprint: str = ""
+    perf_bounty: PerfBountyResult | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +387,7 @@ class State:
         path = self._iterations_path()
         rows: list[dict] = []
         for row in read_jsonl_iter(path):
-            if row.get("schema") == "iteration/v1":
+            if row.get("schema") in ("iteration/v1", "iteration/v2"):
                 rows.append(row)
         tail = rows[-n:] if len(rows) > n else rows
         result: list[IterationRecord] = []

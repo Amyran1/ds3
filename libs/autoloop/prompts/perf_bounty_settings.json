@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Bash",
+      "Glob",
+      "Grep",
+      "Write"
+    ],
+    "deny": [
+      "WebFetch",
+      "WebSearch",
+      "NotebookEdit"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "libs/autoloop/hooks/autoloop-write-guard.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "permissionMode": "bypassPermissions"
+}
