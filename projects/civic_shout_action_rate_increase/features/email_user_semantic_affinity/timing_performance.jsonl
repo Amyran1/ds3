@@ -1,0 +1,1 @@
+{"feature_family": "email_user_semantic_affinity", "version": 1, "tier": "smoke_sample_frac_0.001", "rows_sample": 129019, "rows_history": 36722665, "rows_full": 129190540, "wall_seconds": 57.2, "ts": "2026-05-14T14:24:10Z", "git": "3ad14b2", "skip_s3": true}

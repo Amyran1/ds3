@@ -1,0 +1,16 @@
+feature_family: email_user_semantic_affinity
+version: v1
+row_keys: [user_id, email_id]
+date_column: date_sent
+feature_cols:
+  - semantic_affinity_to_prior_actions  # cosine sim of current email dense_vector to user's prior-action centroid
+  - n_prior_actions_for_affinity  # count of prior actioned emails used in centroid
+provenance: planner brainstorm bs-iter3-01-91b117d1 (iter 3). Champion (run_01) scores roc_auc_residualized_non_streak_users_pair=0.6442 — recency cluster explains pooled lift but has zero semantic signal about email content vs user history.
+target_alignment: built from actioned_24h (v3); not actioned (v2-deprecated). Causal centroid uses only date_sent < current strictly.
+null_policy: 0.0 sentinel when n_prior_actions_for_affinity == 0 (cold-start / pre-first-action). Harness fills any residual nulls with 0.
+leakage_audit: per-user running sum is shifted relative to the current row (action only contributes after its date_sent passes). Email dense_vectors are immutable send-time content from Pinecone production-content-routing-dense. No outcome data in vector construction; no peeking across the date_sent boundary.
+build_script: features/email_user_semantic_affinity/create_cache_v1.py
+data_dependency:
+  - entities/civic_shout_emails v1 (dense_vector)
+  - entities/civic_shout_user_emails v3 (actioned_24h)
+cache_scope: smoke-tier sample-aligned with run_03 (sample(fraction=0.001, seed=42) on date-filtered user_emails). Cache covers exactly the rows the iter-3 smoke run evaluates; not a full-tier cache.
