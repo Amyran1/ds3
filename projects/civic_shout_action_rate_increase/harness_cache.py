@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+import polars as pl
+
+_USER_EMAILS_VERSION = 3
+
+
+def _find_project_root() -> Path:
+    here = Path(__file__).parent
+    repo_root = here.parent.parent
+    return repo_root
+
+
+def _blake2b_hex(text: str) -> str:
+    return hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
+
+
+def data_fingerprint(df: pl.DataFrame) -> str:
+    row_count = len(df)
+    date_col = df["date_sent"]
+    min_date = str(date_col.min())
+    max_date = str(date_col.max())
+    schema_key = ",".join(sorted(df.columns))
+    raw = f"v{_USER_EMAILS_VERSION}|{row_count}|{min_date}|{max_date}|{schema_key}"
+    return _blake2b_hex(raw)
+
+
+def fold_train_fingerprint(train_df: pl.DataFrame, fold_k: int, user_features: list[str]) -> str:
+    base_fp = data_fingerprint(train_df)
+    features_key = ",".join(sorted(user_features))
+    raw = f"{base_fp}|fold_{fold_k}|{features_key}"
+    return _blake2b_hex(raw)
+
+
+class HarnessCache:
+    def __init__(self, project_root: Path | None = None) -> None:
+        self.root = (
+            (project_root or _find_project_root())
+            / "data"
+            / "projects"
+            / "civic_shout_action_rate_increase"
+            / "harness_cache"
+        )
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def _confound_path(self, fingerprint: str) -> Path:
+        return self.root / f"confound_scores_{fingerprint}.parquet"
+
+    def _ume_path(self, fingerprint: str, fold_k: int) -> Path:
+        return self.root / f"user_main_effect_predictions_fold_{fold_k}_{fingerprint}.parquet"
+
+    def get_confound_scores(self, fingerprint: str) -> pl.DataFrame | None:
+        path = self._confound_path(fingerprint)
+        if not path.exists():
+            return None
+        return pl.read_parquet(path)
+
+    def put_confound_scores(self, fingerprint: str, df: pl.DataFrame) -> None:
+        path = self._confound_path(fingerprint)
+        df.write_parquet(path)
+
+    def get_user_main_effect_predictions(
+        self, fingerprint: str, fold_k: int
+    ) -> pl.DataFrame | None:
+        path = self._ume_path(fingerprint, fold_k)
+        if not path.exists():
+            return None
+        return pl.read_parquet(path)
+
+    def put_user_main_effect_predictions(
+        self, fingerprint: str, fold_k: int, df: pl.DataFrame
+    ) -> None:
+        path = self._ume_path(fingerprint, fold_k)
+        df.write_parquet(path)
