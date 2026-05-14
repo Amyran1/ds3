@@ -1408,7 +1408,7 @@ def _compute_user_main_effect_lgbm(
 
     model = LGBMClassifier(**args)
     model.fit(X_train, y_train)
-    preds = model.predict_proba(X_test)[:, 1]
+    preds = model.predict(X_test, raw_score=True)
 
     if cache is not None and fingerprint is not None:
         cache.put_user_main_effect_predictions(
@@ -1459,8 +1459,17 @@ def _run_one_fold(
     model = LGBMClassifier(**lgbm_args)
     model.fit(X_train, y_train)
 
-    s_test = model.predict_proba(X_test)[:, 1]
-    s_train = model.predict_proba(X_train)[:, 1]
+    # Single inference per split; derive proba once for PSI/row_loss path.
+    raw_test = model.predict(X_test, raw_score=True)
+    raw_train = model.predict(X_train, raw_score=True)
+
+    # AUC + residualization: rank-invariant under sigmoid — use raw scores.
+    s_test = raw_test
+    s_train = raw_train
+
+    # Proba for consumers that require [0,1]: PSI bins and row_loss (cross-entropy).
+    proba_test = 1.0 / (1.0 + np.exp(-raw_test))
+    proba_train = 1.0 / (1.0 + np.exp(-raw_train))
 
     c_u_main_effect_test = _compute_user_main_effect_lgbm(
         train_df,
@@ -1531,14 +1540,14 @@ def _run_one_fold(
 
     pred_rows = test_df.with_columns(
         [
-            pl.Series("score", s_test),
+            pl.Series("score", proba_test),
             pl.Series("score_residualized", s_resid_xfit),
             pl.lit(q_label).alias("fold"),
             pl.Series(
                 "row_loss",
                 (
-                    -y_test * np.log(np.clip(s_test, 1e-7, 1 - 1e-7))
-                    - (1 - y_test) * np.log(np.clip(1 - s_test, 1e-7, 1 - 1e-7))
+                    -y_test * np.log(np.clip(proba_test, 1e-7, 1 - 1e-7))
+                    - (1 - y_test) * np.log(np.clip(1 - proba_test, 1e-7, 1 - 1e-7))
                 ),
             ),
         ]
@@ -1553,8 +1562,8 @@ def _run_one_fold(
         "ci_low": ci_low,
         "ci_high": ci_high,
         "y_test": y_test,
-        "s_test": s_test,
-        "s_train": s_train,
+        "s_test": proba_test,
+        "s_train": proba_train,
         "s_resid": s_resid_xfit,
         "s_resid_old": s_resid_old,
         "c_u_test": c_u_test,
