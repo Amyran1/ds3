@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from libs.autoloop.state import AutoloopConfig, BrainstormItem, IterationRecord, State
-from libs.autoloop.supervisor import SupervisorArgs, SupervisorExitCode, run_supervisor
-
 __all__ = [
     "AutoloopConfig",
     "State",
@@ -14,3 +11,15 @@ __all__ = [
     "SupervisorArgs",
     "SupervisorExitCode",
 ]
+
+
+def __getattr__(name: str):  # PEP 562 lazy attribute resolution
+    if name in {"AutoloopConfig", "BrainstormItem", "IterationRecord", "State"}:
+        from libs.autoloop import state
+
+        return getattr(state, name)
+    if name in {"SupervisorArgs", "SupervisorExitCode", "run_supervisor"}:
+        from libs.autoloop import supervisor
+
+        return getattr(supervisor, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
