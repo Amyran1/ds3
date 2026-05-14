@@ -610,29 +610,86 @@ def _assert_no_future_leak(
     n_sample: int = 1000,
     seed: int = 42,
 ) -> HarnessDiagnostic:
-    """Re-derive score offline for a sample and confirm max |diff| < 1e-9."""
+    """Re-derive score for a sample via vectorized cumsum and confirm max |diff| < 1e-9.
+
+    Replaces the per-row filter loop with a single group_by + cumsum + shift(1)
+    per confound. Strict `< t` semantics are preserved: aggregating to
+    (group, time) then shift(1) means the cumsum at time t excludes time-t rows.
+    """
+    if df[time_col].is_null().any():
+        raise LeakageError(
+            f"Future-leak audit aborted: null values found in {time_col!r}. "
+            "All rows must have a non-null time value."
+        )
+
     rng = np.random.default_rng(seed)
-    sample_idx = rng.choice(len(df), size=min(n_sample, len(df)), replace=False)
+    n_audited = min(n_sample, len(df))
+    sample_idx = rng.choice(len(df), size=n_audited, replace=False)
     sample = df[sample_idx]
 
-    max_diff = 0.0
-    for row in sample.iter_rows(named=True):
-        group_val = row[group_col]
-        t = row[time_col]
-        prior = df.filter((pl.col(group_col) == group_val) & (pl.col(time_col) < t))
-        if score_col == "user_prior_engagement_score":
-            n_prior_actions = prior["actioned_24h"].cast(pl.Int32).sum() if len(prior) > 0 else 0
-            expected = float(np.log1p(n_prior_actions))
-        elif score_col == "email_popularity_score":
-            n_prior_acts = int(prior["actioned_24h"].cast(pl.Int32).sum()) if len(prior) > 0 else 0
-            n_prior_sends = len(prior)
-            expected = (n_prior_acts + 1) / (n_prior_sends + 2)
-        else:
-            continue
+    if score_col == "user_prior_engagement_score":
+        date_level = (
+            df.group_by([group_col, time_col])
+            .agg(pl.col("actioned_24h").cast(pl.Int32).sum().alias("_acts_on_date"))
+            .sort([group_col, time_col])
+            .with_columns(
+                pl.col("_acts_on_date")
+                .cum_sum()
+                .shift(1)
+                .over(group_col)
+                .fill_null(0)
+                .alias("_prior_acts")
+            )
+            .select([group_col, time_col, "_prior_acts"])
+        )
+        joined = sample.join(date_level, on=[group_col, time_col], how="left").with_columns(
+            pl.col("_prior_acts").fill_null(0)
+        )
+        expected = np.log1p(joined["_prior_acts"].to_numpy().astype(np.float64))
 
-        actual = float(row[score_col])
-        diff = abs(actual - expected)
-        max_diff = max(max_diff, diff)
+    elif score_col == "email_popularity_score":
+        date_level = (
+            df.group_by([group_col, time_col])
+            .agg(
+                pl.len().cast(pl.Int64).alias("_sends_on_date"),
+                pl.col("actioned_24h").cast(pl.Int32).sum().alias("_acts_on_date"),
+            )
+            .sort([group_col, time_col])
+            .with_columns(
+                pl.col("_sends_on_date")
+                .cum_sum()
+                .shift(1)
+                .over(group_col)
+                .fill_null(0)
+                .alias("_prior_sends"),
+                pl.col("_acts_on_date")
+                .cum_sum()
+                .shift(1)
+                .over(group_col)
+                .fill_null(0)
+                .alias("_prior_acts"),
+            )
+            .select([group_col, time_col, "_prior_sends", "_prior_acts"])
+        )
+        joined = sample.join(date_level, on=[group_col, time_col], how="left").with_columns(
+            pl.col("_prior_sends").fill_null(0),
+            pl.col("_prior_acts").fill_null(0),
+        )
+        prior_acts = joined["_prior_acts"].to_numpy().astype(np.float64)
+        prior_sends = joined["_prior_sends"].to_numpy().astype(np.float64)
+        expected = (prior_acts + 1) / (prior_sends + 2)
+
+    else:
+        return HarnessDiagnostic(
+            name="future_leak_audit",
+            severity="info",
+            message=f"Strict-causality audit skipped for unknown score_col={score_col!r}",
+            values={"n_audited": 0, "max_diff": 0.0, "score_col": score_col},
+        )
+
+    actual = joined[score_col].to_numpy().astype(np.float64)
+    diffs = np.abs(actual - expected)
+    max_diff = float(diffs.max()) if len(diffs) > 0 else 0.0
 
     if max_diff > 1e-9:
         raise LeakageError(
@@ -642,8 +699,8 @@ def _assert_no_future_leak(
     return HarnessDiagnostic(
         name="future_leak_audit",
         severity="info",
-        message=f"Strict-causality audit passed for {score_col}: n_audited={min(n_sample, len(df))}, max_diff={max_diff:.2e}",
-        values={"n_audited": min(n_sample, len(df)), "max_diff": max_diff, "score_col": score_col},
+        message=f"Strict-causality audit passed for {score_col}: n_audited={n_audited}, max_diff={max_diff:.2e}",
+        values={"n_audited": n_audited, "max_diff": max_diff, "score_col": score_col},
     )
 
 
