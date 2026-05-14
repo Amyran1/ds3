@@ -9,6 +9,7 @@ from typing import Any, Literal
 import numpy as np
 import polars as pl
 import psutil
+from joblib import Parallel, delayed
 from lightgbm import LGBMClassifier
 from pydantic import BaseModel, ConfigDict, Field
 from sklearn.isotonic import IsotonicRegression
@@ -274,6 +275,9 @@ class CivicShoutResultRow(RunResultRow):
     roc_auc_raw_pair: float | None = None
     roc_auc_confound_only_pair: float | None = None
     roc_auc_residualized_user_prior_pair: float | None = None
+    roc_auc_residualized_user_prior_x_email_popularity_pair: float | None = None
+    roc_auc_residualized_user_main_effect_pair: float | None = None
+    roc_auc_residualized_user_main_effect_x_email_popularity_pair: float | None = None
     roc_auc_residualized_email_popularity_pair: float | None = None
     pr_auc_residualized_user_prior_x_email_popularity_pair: float | None = None
     roc_auc_residualized_user_weighted_pair: float | None = None
@@ -345,6 +349,15 @@ class CivicShoutHarnessResponse(HarnessResponse):
             "roc_auc_raw_pair": sec.get("roc_auc_raw_pair"),
             "roc_auc_confound_only_pair": sec.get("roc_auc_confound_only_pair"),
             "roc_auc_residualized_user_prior_pair": sec.get("roc_auc_residualized_user_prior_pair"),
+            "roc_auc_residualized_user_prior_x_email_popularity_pair": sec.get(
+                "roc_auc_residualized_user_prior_x_email_popularity_pair"
+            ),
+            "roc_auc_residualized_user_main_effect_pair": sec.get(
+                "roc_auc_residualized_user_main_effect_pair"
+            ),
+            "roc_auc_residualized_user_main_effect_x_email_popularity_pair": sec.get(
+                "roc_auc_residualized_user_main_effect_x_email_popularity_pair"
+            ),
             "roc_auc_residualized_email_popularity_pair": sec.get(
                 "roc_auc_residualized_email_popularity_pair"
             ),
@@ -700,6 +713,7 @@ def _user_block_bootstrap(
     user_ids: np.ndarray,
     n_boot: int = 500,
     seed: int = 42,
+    n_jobs: int = -1,
 ) -> np.ndarray:
     """Sample whole users with replacement, preserving multiplicity, recompute AUC per resample."""
     rng = np.random.default_rng(seed)
@@ -713,24 +727,30 @@ def _user_block_bootstrap(
         u: sort_idx[boundaries[i] : boundaries_end[i]] for i, u in enumerate(unique_users)
     }
 
-    boot_aucs = np.empty(n_boot)
-    for i in range(n_boot):
-        sampled_users = rng.choice(unique_users, size=len(unique_users), replace=True)
+    child_seeds = rng.integers(0, 2**32 - 1, size=n_boot)
+
+    def _one_replicate(rep_seed: int) -> float:
+        rep_rng = np.random.default_rng(rep_seed)
+        sampled_users = rep_rng.choice(unique_users, size=len(unique_users), replace=True)
         row_indices = np.concatenate([user_to_rows[u] for u in sampled_users])
         y_b = y[row_indices]
         s_b = s_resid[row_indices]
         if len(np.unique(y_b)) < 2:
-            boot_aucs[i] = 0.5
-            continue
-        boot_aucs[i] = float(roc_auc_score(y_b, s_b))
+            return 0.5
+        return float(roc_auc_score(y_b, s_b))
 
-    return boot_aucs
+    _effective_jobs = 1 if (n_jobs == 1 or len(y) < 50_000) else n_jobs
+    results = Parallel(n_jobs=_effective_jobs, backend="loky")(
+        delayed(_one_replicate)(int(s)) for s in child_seeds
+    )
+    return np.array(results, dtype=np.float64)
 
 
 def _pooled_user_block_bootstrap_mean_of_folds(
     fold_results: list[dict],
     n_boot: int = 500,
     seed: int = 42,
+    n_jobs: int = -1,
 ) -> tuple[float, float]:
     """Cluster-bootstrap the mean-across-folds AUC estimator.
 
@@ -757,24 +777,35 @@ def _pooled_user_block_bootstrap_mean_of_folds(
             {u: sort_idx[starts[i] : ends[i]] for i, u in enumerate(fold_unique)}
         )
 
-    replicate_stats = np.empty(n_boot)
-    for b in range(n_boot):
-        sampled_users = rng.choice(unique_users, size=len(unique_users), replace=True)
+    child_seeds = rng.integers(0, 2**32 - 1, size=n_boot)
+
+    fold_ys = [r["y_test"] for r in fold_results]
+    fold_ss = [r["s_resid"] for r in fold_results]
+
+    def _one_replicate(rep_seed: int) -> float:
+        rep_rng = np.random.default_rng(rep_seed)
+        sampled_users = rep_rng.choice(unique_users, size=len(unique_users), replace=True)
         fold_aucs_replicate: list[float] = []
-        for r, u_to_rows in zip(fold_results, fold_user_to_rows):
+        for y_fold, s_fold, u_to_rows in zip(fold_ys, fold_ss, fold_user_to_rows):
             chunks = [u_to_rows[u] for u in sampled_users if u in u_to_rows]
             if not chunks:
                 continue
             row_idx = np.concatenate(chunks)
-            y_b = r["y_test"][row_idx]
-            s_b = r["s_resid"][row_idx]
+            y_b = y_fold[row_idx]
+            s_b = s_fold[row_idx]
             if len(np.unique(y_b)) < 2:
                 continue
             fold_aucs_replicate.append(float(roc_auc_score(y_b, s_b)))
         if not fold_aucs_replicate:
-            replicate_stats[b] = 0.5
-        else:
-            replicate_stats[b] = float(np.mean(fold_aucs_replicate))
+            return 0.5
+        return float(np.mean(fold_aucs_replicate))
+
+    total_rows = sum(len(r["y_test"]) for r in fold_results)
+    _effective_jobs = 1 if (n_jobs == 1 or total_rows < 50_000) else n_jobs
+    results = Parallel(n_jobs=_effective_jobs, backend="loky")(
+        delayed(_one_replicate)(int(s)) for s in child_seeds
+    )
+    replicate_stats = np.array(results, dtype=np.float64)
 
     return (
         float(np.quantile(replicate_stats, 0.025)),
@@ -1050,6 +1081,40 @@ def _compute_cell_class_balance_diagnostic(
 
 
 # ---------------------------------------------------------------------------
+# Per-fold user main effect (LightGBM on user-side features only)
+# ---------------------------------------------------------------------------
+
+
+def _compute_user_main_effect_lgbm(
+    train_df: pl.DataFrame,
+    test_df: pl.DataFrame,
+    feature_cols: list[str],
+    ml_model_config: ML_Model_Config,
+    outcome_variable: str,
+    seed: int,
+    inner_threads: int,
+) -> np.ndarray:
+    """Train a lightweight LightGBM on train_df and return test_df probabilities.
+
+    Uses n_estimators=100 (lighter than the main model — this is a baseline).
+    Train/test separation guarantees no future leak by construction.
+    """
+    args = dict(ml_model_config.args)
+    args["n_estimators"] = 100
+    args["random_state"] = seed
+    args["n_jobs"] = inner_threads
+    args["verbose"] = -1
+
+    X_train = train_df.select(feature_cols).fill_null(0).to_numpy()
+    y_train = train_df[outcome_variable].to_numpy().astype(np.float32)
+    X_test = test_df.select(feature_cols).fill_null(0).to_numpy()
+
+    model = LGBMClassifier(**args)
+    model.fit(X_train, y_train)
+    return model.predict_proba(X_test)[:, 1]
+
+
+# ---------------------------------------------------------------------------
 # Public harness
 # ---------------------------------------------------------------------------
 
@@ -1066,8 +1131,9 @@ def harness(
 ) -> CivicShoutHarnessResponse:
     """Evaluate features against actioned_24h via quarterly walk-forward.
 
-    Primary metric: roc_auc_residualized_user_prior_x_email_popularity_pair.
-    Confound scores are computed on the FULL data before any sampling.
+    Primary metric: roc_auc_residualized_user_main_effect_x_email_popularity_pair.
+    User main effect computed per-fold via LightGBM (train/test split). Email confound
+    computed on FULL data (Laplace-smoothed). Old RFM metric kept as secondary.
     """
     wall_start = time.perf_counter()
     stage_timings: list[HarnessStageTiming] = []
@@ -1246,6 +1312,7 @@ def harness(
         X_test = test_df.select(feature_cols).fill_null(0).to_numpy()
         y_test = test_df["actioned_24h"].to_numpy().astype(np.float32)
 
+        # Old RFM-style user confound (full-data computed, kept for secondary metric)
         c_u_test = test_df["user_prior_engagement_score"].to_numpy()
         c_e_test = test_df["email_popularity_score"].to_numpy()
 
@@ -1278,6 +1345,17 @@ def harness(
         t_pred_start = time.perf_counter()
         s_test = model.predict_proba(X_test)[:, 1]
         s_train = model.predict_proba(X_train)[:, 1]
+
+        # Per-fold user main effect score (strict: trained on train, predicted on test)
+        c_u_main_effect_test = _compute_user_main_effect_lgbm(
+            train_df,
+            test_df,
+            feature_cols,
+            ml_model_config,
+            outcome_variable,
+            seed=42,
+            inner_threads=inner_threads,
+        )
         t_predict_total += time.perf_counter() - t_pred_start
 
         all_train_scores.append(s_train)
@@ -1297,13 +1375,21 @@ def harness(
             except LeakageError:
                 raise
 
+        # NEW primary: residualize against (user_main_effect_score, email_popularity_score)
         auc_residualized, auc_dir_a, auc_dir_b, s_resid_xfit = _compute_residualized_auc_cross_fit(
+            y_test, s_test, c_u_main_effect_test, c_e_test, seed=42
+        )
+
+        # OLD secondary: residualize against (user_prior_engagement_score, email_popularity_score)
+        auc_residualized_old, _, _, s_resid_old = _compute_residualized_auc_cross_fit(
             y_test, s_test, c_u_test, c_e_test, seed=42
         )
 
         user_ids_test = test_df["user_id"].to_numpy()
 
-        boot_aucs = _user_block_bootstrap(y_test, s_resid_xfit, user_ids_test, n_boot=500, seed=42)
+        boot_aucs = _user_block_bootstrap(
+            y_test, s_resid_xfit, user_ids_test, n_boot=500, seed=42, n_jobs=-1
+        )
         ci_low = float(np.quantile(boot_aucs, 0.025))
         ci_high = float(np.quantile(boot_aucs, 0.975))
 
@@ -1311,7 +1397,7 @@ def harness(
 
         fold_overlap_diag = _compute_confound_overlap_diagnostic(
             fold_label=q_label,
-            c_u_test=c_u_test,
+            c_u_test=c_u_main_effect_test,
             c_e_test=c_e_test,
             y_test=y_test,
             min_positives_threshold=_confound_overlap_threshold,
@@ -1322,6 +1408,7 @@ def harness(
             {
                 "q_label": q_label,
                 "auc_residualized": auc_residualized,
+                "auc_residualized_old": auc_residualized_old,
                 "auc_dir_a": auc_dir_a,
                 "auc_dir_b": auc_dir_b,
                 "ci_low": ci_low,
@@ -1329,7 +1416,9 @@ def harness(
                 "y_test": y_test,
                 "s_test": s_test,
                 "s_resid": s_resid_xfit,
+                "s_resid_old": s_resid_old,
                 "c_u_test": c_u_test,
+                "c_u_main_effect_test": c_u_main_effect_test,
                 "c_e_test": c_e_test,
                 "user_ids": user_ids_test,
                 "test_df": test_df,
@@ -1379,14 +1468,16 @@ def harness(
     t0 = time.perf_counter()
 
     fold_aucs = [r["auc_residualized"] for r in fold_results]
+    fold_aucs_old = [r["auc_residualized_old"] for r in fold_results]
     fold_labels = [r["q_label"] for r in fold_results]
     primary_value = float(np.mean(fold_aucs))
+    old_primary_value = float(np.mean(fold_aucs_old))
     fold_std = float(np.std(fold_aucs, ddof=1)) if len(fold_aucs) > 1 else 0.0
 
     k = len(fold_aucs)
     if k > 1:
         primary_ci_low, primary_ci_high = _pooled_user_block_bootstrap_mean_of_folds(
-            fold_results, n_boot=500, seed=42
+            fold_results, n_boot=500, seed=42, n_jobs=-1
         )
     else:
         primary_ci_low = fold_results[0]["ci_low"]
@@ -1396,7 +1487,9 @@ def harness(
     y_all = np.concatenate([r["y_test"] for r in fold_results])
     s_all = np.concatenate([r["s_test"] for r in fold_results])
     s_resid_all = np.concatenate([r["s_resid"] for r in fold_results])
+    s_resid_old_all = np.concatenate([r["s_resid_old"] for r in fold_results])
     c_u_all = np.concatenate([r["c_u_test"] for r in fold_results])
+    c_u_main_effect_all = np.concatenate([r["c_u_main_effect_test"] for r in fold_results])
     c_e_all = np.concatenate([r["c_e_test"] for r in fold_results])
     user_ids_all = np.concatenate([r["user_ids"] for r in fold_results])
     tenure_all = np.concatenate([r["test_df"]["tenure_bucket"].to_numpy() for r in fold_results])
@@ -1413,17 +1506,24 @@ def harness(
         float(roc_auc_score(y_all, confound_combined)) if len(np.unique(y_all)) >= 2 else 0.5
     )
 
-    # Secondary: single-confound residualized AUCs
+    # Secondary: single-confound residualized AUCs (old RFM user confound)
     roc_auc_user_prior_only = _residualize_single_confound(y_all, s_all, c_u_all, seed=42)
     roc_auc_email_pop_only = _residualize_single_confound(y_all, s_all, c_e_all, seed=42)
 
-    # PR-AUC variant
+    # Secondary: single-confound residualized AUC for new user main effect
+    roc_auc_user_main_effect_only = _residualize_single_confound(
+        y_all, s_all, c_u_main_effect_all, seed=42
+    )
+
+    # PR-AUC variant (uses new primary residualized scores)
     pr_auc_residualized = (
         float(average_precision_score(y_all, s_resid_all)) if len(np.unique(y_all)) >= 2 else 0.0
     )
 
-    # Per-tenure bucket residualized AUCs
-    tenure_aucs = _per_tenure_residualized_auc(y_all, s_resid_all, tenure_all, c_u_all, c_e_all)
+    # Per-tenure bucket residualized AUCs (uses new primary residualized scores)
+    tenure_aucs = _per_tenure_residualized_auc(
+        y_all, s_resid_all, tenure_all, c_u_main_effect_all, c_e_all
+    )
 
     # Non-streak users (Gemini — streak-bridge guard)
     all_test_dfs = pl.concat([r["test_df"] for r in fold_results])
@@ -1698,6 +1798,21 @@ def harness(
             direction="higher_is_better",
         ),
         HarnessMetric(
+            name="roc_auc_residualized_user_prior_x_email_popularity_pair",
+            value=old_primary_value,
+            direction="higher_is_better",
+        ),
+        HarnessMetric(
+            name="roc_auc_residualized_user_main_effect_pair",
+            value=roc_auc_user_main_effect_only,
+            direction="higher_is_better",
+        ),
+        HarnessMetric(
+            name="roc_auc_residualized_user_main_effect_x_email_popularity_pair",
+            value=primary_value,
+            direction="higher_is_better",
+        ),
+        HarnessMetric(
             name="roc_auc_residualized_email_popularity_pair",
             value=roc_auc_email_pop_only,
             direction="higher_is_better",
@@ -1767,7 +1882,7 @@ def harness(
 
     by_fold_metrics = [
         HarnessMetric(
-            name="roc_auc_residualized_user_prior_x_email_popularity_pair",
+            name="roc_auc_residualized_user_main_effect_x_email_popularity_pair",
             value=r["auc_residualized"],
             split=r["q_label"],
             fold=i,
@@ -1791,14 +1906,15 @@ def harness(
 
     response = CivicShoutHarnessResponse(
         summary=HarnessSummary(
-            primary_metric_name="roc_auc_residualized_user_prior_x_email_popularity_pair",
+            primary_metric_name="roc_auc_residualized_user_main_effect_x_email_popularity_pair",
             primary_metric_value=primary_value,
             baseline_metric_value=0.5,
             lift_vs_baseline=primary_value - 0.5,
             result_notes=[
                 f"Quarterly walk-forward: {len(fold_results)} valid folds over {fold_labels[0]}–{fold_labels[-1]}.",
                 f"Fold AUCs: {[round(a, 4) for a in fold_aucs]}",
-                "Confound scores computed on FULL data per Codex recommendation.",
+                f"Old RFM-floor secondary: {round(old_primary_value, 4)} (user_prior_x_email_popularity).",
+                "User main effect computed per-fold via LightGBM on train split (train/test separation guarantees no leak).",
             ],
         ),
         method=HarnessMethod(
@@ -1825,7 +1941,7 @@ def harness(
         ),
         metrics=HarnessMetrics(
             primary=HarnessMetric(
-                name="roc_auc_residualized_user_prior_x_email_popularity_pair",
+                name="roc_auc_residualized_user_main_effect_x_email_popularity_pair",
                 value=primary_value,
                 direction="higher_is_better",
                 std=fold_std,

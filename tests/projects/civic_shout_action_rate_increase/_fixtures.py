@@ -156,6 +156,36 @@ def make_synthetic_user_emails(seed: int = 42) -> pl.DataFrame:
     return _build_sends(rng, n_users=2000, n_emails=40, include_recency=True)
 
 
+def make_synthetic_with_interaction(seed: int = 42) -> pl.DataFrame:
+    """Variant with a (user_id, email_id) pair random effect in the outcome logit.
+
+    The pair effect N(0, 0.4) is NOT captured by user-only or email-only features,
+    so the stricter user-main-effect residualized AUC will be > 0.50 (routing signal present).
+    """
+    rng = np.random.default_rng(seed)
+    base = _build_sends(rng, n_users=2000, n_emails=40, include_recency=True)
+
+    n_users = 2000
+    n_emails = 40
+    pair_effects = rng.normal(0.0, 0.4, size=(n_users, n_emails))
+
+    user_ids = base["user_id"].to_numpy()
+    email_ids = base["email_id"].to_numpy()
+    actioned = base["actioned_24h"].to_numpy().copy().astype(np.float64)
+
+    rng2 = np.random.default_rng(seed + 1)
+    new_actioned = np.empty(len(base), dtype=np.int8)
+    for i in range(len(base)):
+        uid = int(user_ids[i])
+        eid = int(email_ids[i])
+        pair_effect = pair_effects[uid, eid]
+        base_logit = _logit(np.array([actioned[i] * 0.7 + 0.15]))[0]
+        p = float(_sigmoid(np.array(base_logit + pair_effect)))
+        new_actioned[i] = int(rng2.random() < p)
+
+    return base.with_columns(pl.Series("actioned_24h", new_actioned, dtype=pl.Int8))
+
+
 def make_synthetic_features_equal_to_confound(seed: int = 42) -> pl.DataFrame:
     """Variant where outcome has no recency signal.
 

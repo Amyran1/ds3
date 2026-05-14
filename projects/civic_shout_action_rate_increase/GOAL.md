@@ -26,7 +26,9 @@ A 10% relative lift on the v3 baseline:
 
 ### AUC scale target
 
-The current 5% ship-run (smoke scope) reports a residualized AUC of **0.6755**. The harness primary-metric target is a **10% relative lift**: **0.6755 × 1.10 = 0.7430**.
+The primary metric is now `roc_auc_residualized_user_main_effect_x_email_popularity_pair` (stricter baseline). A residualized AUC of **0.50** means no routing signal beyond user/email main effects. The old RFM-floor metric (`roc_auc_residualized_user_prior_x_email_popularity_pair`) remains as a secondary diagnostic.
+
+The **10% relative lift** target on the strict metric: **X × 1.10 ≈ 0.55** (where X is the smoke-run baseline, expected ≈ 0.50; contingent on smoke baseline confirmation).
 
 ## Open data questions affecting the target
 

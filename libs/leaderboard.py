@@ -20,11 +20,28 @@ import time
 from pathlib import Path
 from typing import Any
 
+import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from libs.responses import DiscoveryResultRow, EDAResultRow
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _resolve_project_target(project: str, ledger_path: Path | None = None) -> float | None:
+    if ledger_path is not None:
+        config_path = ledger_path.parent.parent / "autoloop" / "config.yaml"
+    else:
+        config_path = ROOT / "projects" / project / "autoloop" / "config.yaml"
+    if not config_path.exists():
+        return None
+    try:
+        data = yaml.safe_load(config_path.read_text())
+        if isinstance(data, dict) and "goal_metric" in data:
+            return float(data["goal_metric"])
+    except Exception:
+        pass
+    return None
 
 
 class _FlexRow(BaseModel):
@@ -248,13 +265,21 @@ def _build_champion_table(
 def _build_metric_svg(
     harness: list[_FlexRow],
     champion_primary: float | None,
+    target_primary: float | None = None,
 ) -> str:
     values = [r.primary_metric_value for r in harness if r.primary_metric_value is not None]
     if not values:
         return "<div class='muted'>No metric values to plot.</div>"
 
-    target = (champion_primary * 1.10) if champion_primary is not None else None
-    target_label = f"{target:.4f}" if target is not None else None
+    if target_primary is not None:
+        target = target_primary
+        target_label = f"Target = {target:.4f}"
+    elif champion_primary is not None:
+        target = champion_primary * 1.10
+        target_label = f"X × 1.10 target (= {target:.4f})"
+    else:
+        target = None
+        target_label = None
 
     W, H = 700, 120
     ml, mr, mt, mb = 50, 80, 18, 28
@@ -308,7 +333,7 @@ def _build_metric_svg(
         parts.append(
             f'<text x="{ml + pw + 3}" y="{gyp + 4:.1f}" font-size="9" fill="var(--ok)" '
             f'font-family="ui-monospace,monospace" opacity="0.9">'
-            f"X × 1.10 target (= {target_label})</text>"
+            f"{target_label}</text>"
         )
 
     for i, row in enumerate(harness):
@@ -335,12 +360,26 @@ def _build_metric_svg(
     return "\n".join(parts)
 
 
-def _build_metric_grid(harness: list[_FlexRow], champion_primary: float | None) -> str:
+def _build_metric_grid(
+    harness: list[_FlexRow],
+    champion_primary: float | None,
+    target_primary: float | None = None,
+) -> str:
     if not harness:
         return "<div class='muted'>No runs.</div>"
 
-    target = (champion_primary * 1.10) if champion_primary else None
-    target_str = f"{target:.4f}" if target else "n/a"
+    if target_primary is not None:
+        target = target_primary
+        target_str = f"{target:.4f}"
+        target_label_text = target_str
+    elif champion_primary:
+        target = champion_primary * 1.10
+        target_str = f"{target:.4f}"
+        target_label_text = f"X × 1.10 = {target_str}"
+    else:
+        target = None
+        target_str = "n/a"
+        target_label_text = "n/a"
 
     rows_html: list[str] = []
     for row in harness:
@@ -362,12 +401,12 @@ def _build_metric_grid(harness: list[_FlexRow], champion_primary: float | None) 
             f"</tr>"
         )
 
-    svg = _build_metric_svg(harness, champion_primary)
+    svg = _build_metric_svg(harness, champion_primary, target_primary=target_primary)
 
     return f"""
 <div class='section'>
   <h2>Primary vs Secondary Metric Grid</h2>
-  <p class='meta'>Target: X × 1.10 = {html.escape(target_str)}</p>
+  <p class='meta'>Target: {html.escape(target_label_text)}</p>
   <table class='data-table'>
     <thead>
       <tr>
@@ -500,13 +539,36 @@ def _render_body(project: str) -> str:
     has_eda = bool(eda_rows)
     has_disc = bool(disc_rows)
 
+    # Determine canonical metric name from the most recent row (by recorded_at_utc).
+    canonical_metric_name: str | None = None
+    best_ts: str | None = None
+    for row in harness_rows_raw:
+        try:
+            ts = row.recorded_at_utc
+        except Exception:
+            continue
+        if ts and (best_ts is None or ts > best_ts):
+            best_ts = ts
+            canonical_metric_name = row.primary_metric_name
+
+    harness_filtered = harness_rows_raw
+    n_hidden = 0
+    if canonical_metric_name:
+        harness_filtered = [
+            r for r in harness_rows_raw if r.primary_metric_name == canonical_metric_name
+        ]
+        n_hidden = len(harness_rows_raw) - len(harness_filtered)
+
     harness_sorted = sorted(
-        harness_rows_raw,
+        harness_filtered,
         key=lambda r: r.primary_metric_value if r.primary_metric_value is not None else -999,
         reverse=True,
     )
 
     champion_primary = harness_sorted[0].primary_metric_value if harness_sorted else None
+
+    ledger_path = ROOT / "projects" / project / "runs" / "results.jsonl"
+    target_primary = _resolve_project_target(project, ledger_path)
 
     eda_by_run = {r.run_id: r for r in eda_rows}
     disc_by_run = {r.run_id: r for r in disc_rows}
@@ -514,7 +576,9 @@ def _render_body(project: str) -> str:
     champion_section = _build_champion_table(
         harness_sorted, eda_by_run, disc_by_run, has_eda, has_disc
     )
-    metric_section = _build_metric_grid(harness_sorted, champion_primary)
+    metric_section = _build_metric_grid(
+        harness_sorted, champion_primary, target_primary=target_primary
+    )
     tier_section = _build_sample_tier(harness_sorted)
     drift_section = _build_drift_report(
         harness_sorted, eda_rows, disc_rows, has_eda, has_disc, project
@@ -524,9 +588,23 @@ def _render_body(project: str) -> str:
     n_runs = len(harness_sorted)
     champion_str = f"{champion_primary:.4f}" if champion_primary is not None else "—"
 
+    metric_filter_note = ""
+    if canonical_metric_name:
+        hidden_note = (
+            f" {n_hidden} row(s) from earlier metric definitions are hidden."
+            if n_hidden > 0
+            else ""
+        )
+        metric_filter_note = (
+            f"<div class='muted' style='font-size:11px;margin-top:4px;'>"
+            f"Showing {n_runs} run(s) with primary_metric_name = "
+            f"{html.escape(canonical_metric_name)}.{html.escape(hidden_note)}</div>"
+        )
+
     return f"""
   <h1>leaderboard · {html.escape(project)}</h1>
   <div class='meta'>{n_runs} run(s) · champion {html.escape(champion_str)} · rendered {now}</div>
+  {metric_filter_note}
 
   {champion_section}
   {metric_section}

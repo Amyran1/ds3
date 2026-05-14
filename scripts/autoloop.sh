@@ -61,12 +61,12 @@ WATCH_SCRIPT="tmp/visualize/autoloop/render_dashboard.py"
 echo ""
 if [[ -f "$SERVE_SCRIPT" ]]; then
   echo ">> Starting live dashboard server at http://localhost:$PORT/"
-  python "$SERVE_SCRIPT" --port "$PORT" > "$DASHBOARD_LOG" 2>&1 &
+  python "$SERVE_SCRIPT" --port "$PORT" --project "$PROJECT" > "$DASHBOARD_LOG" 2>&1 &
   DASHBOARD_PID=$!
   DASHBOARD_URL="http://localhost:$PORT/"
 elif [[ -f "$WATCH_SCRIPT" ]]; then
   echo ">> Live server not built yet; using file:// watcher fallback."
-  python "$WATCH_SCRIPT" --watch > "$DASHBOARD_LOG" 2>&1 &
+  AUTOLOOP_PROJECT="$PROJECT" python "$WATCH_SCRIPT" --watch > "$DASHBOARD_LOG" 2>&1 &
   DASHBOARD_PID=$!
   DASHBOARD_URL="file://$ROOT/tmp/visualize/autoloop/run-dashboard.html"
 else

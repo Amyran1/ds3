@@ -25,6 +25,7 @@ from projects.civic_shout_action_rate_increase.harness import (
     harness,
 )
 from projects.civic_shout_action_rate_increase.runs.manifest_helper import emit_manifest
+from projects.civic_shout_action_rate_increase.runs.timing_helper import emit_timing_row
 
 _RUNS_DIR = Path(__file__).parent
 _LEDGER = _RUNS_DIR / "results.jsonl"
@@ -138,6 +139,7 @@ def main(
         f.write(eda_response.to_eda_summary_row(metadata).model_dump_json() + "\n")
 
     emit_manifest(metadata, response, run_dir)
+    emit_timing_row(metadata, response, _RUNS_DIR.parent)
 
     print(
         f"[{run_id}] primary={response.summary.primary_metric_value:.4f} "

@@ -30,7 +30,7 @@ def test_returns_civic_shout_response_on_synthetic_data():
     assert isinstance(response, CivicShoutHarnessResponse)
     assert (
         response.summary.primary_metric_name
-        == "roc_auc_residualized_user_prior_x_email_popularity_pair"
+        == "roc_auc_residualized_user_main_effect_x_email_popularity_pair"
     )
     v = response.summary.primary_metric_value
     assert isinstance(v, float)

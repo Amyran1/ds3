@@ -23,6 +23,90 @@
       }
     },
     {
+      "id": "univariate_numeric_actioned_last_1",
+      "title": "actioned_last_1: mean=0.092, std=0.290, missingness=0.000",
+      "severity": "info",
+      "score": 0.0,
+      "description": "p1=0.000, p25=0.000, p50=0.000, p75=0.000, p99=1.000, skew=2.814",
+      "metadata": {
+        "col": "actioned_last_1",
+        "mean": "0.09246128876742567",
+        "std": "0.28967602394207986",
+        "missingness_pct": "0.0",
+        "skew": "2.813755183918348"
+      }
+    },
+    {
+      "id": "univariate_numeric_actioned_last_3",
+      "title": "actioned_last_3: mean=0.273, std=0.644, missingness=0.000",
+      "severity": "info",
+      "score": 0.0,
+      "description": "p1=0.000, p25=0.000, p50=0.000, p75=0.000, p99=3.000, skew=2.546",
+      "metadata": {
+        "col": "actioned_last_3",
+        "mean": "0.27320542492059335",
+        "std": "0.6444971497731873",
+        "missingness_pct": "0.0",
+        "skew": "2.545688540456367"
+      }
+    },
+    {
+      "id": "univariate_numeric_actioned_last_5",
+      "title": "actioned_last_5: mean=0.451, std=0.983, missingness=0.000",
+      "severity": "info",
+      "score": 0.0,
+      "description": "p1=0.000, p25=0.000, p50=0.000, p75=0.000, p99=4.000, skew=2.525",
+      "metadata": {
+        "col": "actioned_last_5",
+        "mean": "0.4512522922909268",
+        "std": "0.9826207822528504",
+        "missingness_pct": "0.0",
+        "skew": "2.5253406052533327"
+      }
+    },
+    {
+      "id": "univariate_numeric_actioned_last_10",
+      "title": "actioned_last_10: mean=0.886, std=1.806, missingness=0.000",
+      "severity": "info",
+      "score": 0.0,
+      "description": "p1=0.000, p25=0.000, p50=0.000, p75=1.000, p99=8.000, skew=2.542",
+      "metadata": {
+        "col": "actioned_last_10",
+        "mean": "0.8861194518033723",
+        "std": "1.8059850995358462",
+        "missingness_pct": "0.0",
+        "skew": "2.542379782690834"
+      }
+    },
+    {
+      "id": "univariate_numeric_sends_since_last_action",
+      "title": "sends_since_last_action: mean=37.466, std=54.675, missingness=0.000",
+      "severity": "info",
+      "score": 0.0,
+      "description": "p1=0.000, p25=4.000, p50=18.000, p75=52.000, p99=261.000, skew=3.861",
+      "metadata": {
+        "col": "sends_since_last_action",
+        "mean": "37.46573616060841",
+        "std": "54.674982836712516",
+        "missingness_pct": "0.0",
+        "skew": "3.8607323730525547"
+      }
+    },
+    {
+      "id": "univariate_numeric_lifetime_actions_prior",
+      "title": "lifetime_actions_prior: mean=23.524, std=49.724, missingness=0.000",
+      "severity": "info",
+      "score": 0.0,
+      "description": "p1=0.000, p25=0.000, p50=3.000, p75=20.000, p99=254.000, skew=3.580",
+      "metadata": {
+        "col": "lifetime_actions_prior",
+        "mean": "23.52363598032544",
+        "std": "49.72448521043731",
+        "missingness_pct": "0.0",
+        "skew": "3.579818773188514"
+      }
+    },
+    {
       "id": "univariate_categorical_action_in_last_5",
       "title": "action_in_last_5: cardinality=2, missingness=0.000",
       "severity": "info",
@@ -42,6 +126,108 @@
       "metadata": {
         "col": "is_in_action_streak",
         "cardinality": "2"
+      }
+    },
+    {
+      "id": "feature_outcome_correlation_actioned_last_1",
+      "title": "actioned_last_1: pearson=0.333, spearman=0.804, mi=0.0403",
+      "severity": "info",
+      "score": 0.3330656725883015,
+      "description": "Pearson=0.3331, Spearman=0.8044, MI=0.040291",
+      "metadata": {
+        "col": "actioned_last_1",
+        "pearson": "0.3330656725883015",
+        "spearman": "0.80441966941364",
+        "mutual_info": "0.0402914876012721"
+      }
+    },
+    {
+      "id": "feature_outcome_correlation_actioned_last_3",
+      "title": "actioned_last_3: pearson=0.446, spearman=0.687, mi=0.0716",
+      "severity": "info",
+      "score": 0.44553154661330624,
+      "description": "Pearson=0.4455, Spearman=0.6873, MI=0.071624",
+      "metadata": {
+        "col": "actioned_last_3",
+        "pearson": "0.44553154661330624",
+        "spearman": "0.6872561636295463",
+        "mutual_info": "0.07162374768649693"
+      }
+    },
+    {
+      "id": "feature_outcome_correlation_actioned_last_5",
+      "title": "actioned_last_5: pearson=0.480, spearman=0.603, mi=0.0847",
+      "severity": "info",
+      "score": 0.48045669596119345,
+      "description": "Pearson=0.4805, Spearman=0.6030, MI=0.084721",
+      "metadata": {
+        "col": "actioned_last_5",
+        "pearson": "0.48045669596119345",
+        "spearman": "0.6029507132806029",
+        "mutual_info": "0.08472107971662801"
+      }
+    },
+    {
+      "id": "feature_outcome_correlation_actioned_last_10",
+      "title": "actioned_last_10: pearson=0.510, spearman=0.519, mi=0.0924",
+      "severity": "info",
+      "score": 0.5097981465175714,
+      "description": "Pearson=0.5098, Spearman=0.5186, MI=0.092414",
+      "metadata": {
+        "col": "actioned_last_10",
+        "pearson": "0.5097981465175714",
+        "spearman": "0.5185525625698513",
+        "mutual_info": "0.09241404525102781"
+      }
+    },
+    {
+      "id": "feature_outcome_correlation_sends_since_last_action",
+      "title": "sends_since_last_action: pearson=-0.187, spearman=-0.212, mi=0.0734",
+      "severity": "info",
+      "score": 0.18651184241533816,
+      "description": "Pearson=-0.1865, Spearman=-0.2116, MI=0.073360",
+      "metadata": {
+        "col": "sends_since_last_action",
+        "pearson": "-0.18651184241533816",
+        "spearman": "-0.21164898403716667",
+        "mutual_info": "0.07336028440208353"
+      }
+    },
+    {
+      "id": "feature_outcome_correlation_lifetime_actions_prior",
+      "title": "lifetime_actions_prior: pearson=0.385, spearman=0.237, mi=0.0628",
+      "severity": "info",
+      "score": 0.385023924853752,
+      "description": "Pearson=0.3850, Spearman=0.2373, MI=0.062758",
+      "metadata": {
+        "col": "lifetime_actions_prior",
+        "pearson": "0.385023924853752",
+        "spearman": "0.23728651757267094",
+        "mutual_info": "0.06275841945865412"
+      }
+    },
+    {
+      "id": "feature_feature_correlation_actioned_last_3_actioned_last_5",
+      "title": "High correlation: actioned_last_3 ↔ actioned_last_5 |r|=0.912",
+      "severity": "warning",
+      "score": 0.911902714945997,
+      "description": "Pearson r=0.9119 exceeds threshold 0.85",
+      "metadata": {
+        "col_a": "actioned_last_3",
+        "col_b": "actioned_last_5",
+        "pearson": "0.911902714945997"
+      }
+    },
+    {
+      "id": "feature_feature_correlation_actioned_last_5_actioned_last_10",
+      "title": "High correlation: actioned_last_5 ↔ actioned_last_10 |r|=0.915",
+      "severity": "warning",
+      "score": 0.9147275734781335,
+      "description": "Pearson r=0.9147 exceeds threshold 0.85",
+      "metadata": {
+        "col_a": "actioned_last_5",
+        "col_b": "actioned_last_10",
+        "pearson": "0.9147275734781335"
       }
     },
     {
@@ -95,44 +281,44 @@
   "scores": {
     "outcome_prevalence": 0.09267986054810362,
     "drift_score": 0.0,
-    "n_findings_warning": 1,
+    "n_findings_warning": 3,
     "n_findings_error": 0,
     "top_finding_id": "outcome_distribution_positive_rate"
   },
   "performance": {
-    "total_seconds": 4.687638790986966,
+    "total_seconds": 26.42422924999846,
     "stage_timings": [
       {
         "stage": "outcome_distribution",
-        "seconds": 0.033311500010313466
+        "seconds": 0.040706542029511184
       },
       {
         "stage": "univariate_numeric",
-        "seconds": 0.00003487500362098217
+        "seconds": 0.5305272089899518
       },
       {
         "stage": "univariate_categorical",
-        "seconds": 0.05776433399296366
+        "seconds": 0.060451500001363456
       },
       {
         "stage": "feature_outcome_correlation",
-        "seconds": 0.000029750022804364562
+        "seconds": 21.130693374958355
       },
       {
         "stage": "feature_feature_correlation",
-        "seconds": 0.00001841600169427693
+        "seconds": 0.08683170902077109
       },
       {
         "stage": "missingness_pattern",
-        "seconds": 4.520622542011552
+        "seconds": 4.502739500021562
       },
       {
         "stage": "row_alignment_audit",
-        "seconds": 0.024941666022641584
+        "seconds": 0.024022792000323534
       },
       {
         "stage": "eda_cohort_baseline",
-        "seconds": 0.05082508301711641
+        "seconds": 0.04808624996803701
       }
     ]
   },
@@ -141,7 +327,7 @@
   "method_results": [
     {
       "name": "outcome_distribution",
-      "seconds": 0.033311500010313466,
+      "seconds": 0.040706542029511184,
       "n_findings": 2,
       "artifact_paths": [
         "runs/eda_scratch/artifacts/eda/outcome_distribution.png"
@@ -151,15 +337,17 @@
     },
     {
       "name": "univariate_numeric",
-      "seconds": 0.00003487500362098217,
-      "n_findings": 0,
-      "artifact_paths": [],
+      "seconds": 0.5305272089899518,
+      "n_findings": 6,
+      "artifact_paths": [
+        "runs/eda_scratch/artifacts/eda/univariate_numeric.png"
+      ],
       "skipped": false,
       "skip_reason": ""
     },
     {
       "name": "univariate_categorical",
-      "seconds": 0.05776433399296366,
+      "seconds": 0.060451500001363456,
       "n_findings": 2,
       "artifact_paths": [
         "runs/eda_scratch/artifacts/eda/univariate_categorical.png"
@@ -169,23 +357,27 @@
     },
     {
       "name": "feature_outcome_correlation",
-      "seconds": 0.000029750022804364562,
-      "n_findings": 0,
-      "artifact_paths": [],
+      "seconds": 21.130693374958355,
+      "n_findings": 6,
+      "artifact_paths": [
+        "runs/eda_scratch/artifacts/eda/feature_outcome_correlation.png"
+      ],
       "skipped": false,
       "skip_reason": ""
     },
     {
       "name": "feature_feature_correlation",
-      "seconds": 0.00001841600169427693,
-      "n_findings": 0,
-      "artifact_paths": [],
+      "seconds": 0.08683170902077109,
+      "n_findings": 2,
+      "artifact_paths": [
+        "runs/eda_scratch/artifacts/eda/feature_feature_correlation.png"
+      ],
       "skipped": false,
       "skip_reason": ""
     },
     {
       "name": "missingness_pattern",
-      "seconds": 4.520622542011552,
+      "seconds": 4.502739500021562,
       "n_findings": 0,
       "artifact_paths": [
         "runs/eda_scratch/artifacts/eda/missingness_pattern.png"
@@ -195,7 +387,7 @@
     },
     {
       "name": "row_alignment_audit",
-      "seconds": 0.024941666022641584,
+      "seconds": 0.024022792000323534,
       "n_findings": 1,
       "artifact_paths": [],
       "skipped": false,
@@ -203,7 +395,7 @@
     },
     {
       "name": "eda_cohort_baseline",
-      "seconds": 0.05082508301711641,
+      "seconds": 0.04808624996803701,
       "n_findings": 3,
       "artifact_paths": [
         "runs/eda_scratch/artifacts/eda/eda_cohort_baseline.png"
@@ -213,14 +405,14 @@
     }
   ],
   "eda_summary": {
-    "n_findings_total": 8,
+    "n_findings_total": 22,
     "n_findings_by_severity": {
-      "info": 7,
-      "warning": 1,
+      "info": 19,
+      "warning": 3,
       "error": 0
     },
     "outcome_positive_rate": 0.09267986054810362,
-    "feature_feature_max_abs_pearson": null,
+    "feature_feature_max_abs_pearson": 0.9147275734781335,
     "cohort_drift_max_relative_lift": 1.668143163426224
   },
   "data_profile": {

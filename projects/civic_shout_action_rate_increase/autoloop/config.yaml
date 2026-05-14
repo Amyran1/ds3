@@ -1,9 +1,9 @@
 project: civic_shout_action_rate_increase
 outcome_variable: actioned_24h
 comparison_group: action_rate_increase_temporal_holdout_residualized_auc_v1
-primary_metric: roc_auc_residualized_user_prior_x_email_popularity_pair
+primary_metric: roc_auc_residualized_user_main_effect_x_email_popularity_pair
 metric_direction: higher_is_better
-goal_metric: 0.7430
+goal_metric: 0.55
 sample_frac: 0.05
 gap_finder:
   cadence: every_n_iters

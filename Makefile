@@ -80,14 +80,14 @@ autoloop:
 autoloop-dashboard:
 	@. $(VENV_ACTIVATE) && \
 	  if [ -f tmp/visualize/autoloop/serve_dashboard.py ]; then \
-	    python tmp/visualize/autoloop/serve_dashboard.py --port $(PORT); \
+	    python tmp/visualize/autoloop/serve_dashboard.py --port $(PORT) --project $(PROJECT); \
 	  else \
 	    echo "Live server not built yet — falling back to --watch render"; \
-	    python tmp/visualize/autoloop/render_dashboard.py --watch; \
+	    AUTOLOOP_PROJECT=$(PROJECT) python tmp/visualize/autoloop/render_dashboard.py --watch; \
 	  fi
 
 autoloop-render:
-	@. $(VENV_ACTIVATE) && python tmp/visualize/autoloop/render_dashboard.py
+	@. $(VENV_ACTIVATE) && AUTOLOOP_PROJECT=$(PROJECT) python tmp/visualize/autoloop/render_dashboard.py --project $(PROJECT)
 
 autoloop-prereqs:
 	@. $(VENV_ACTIVATE) && python -m libs.autoloop check-prereqs --project $(PROJECT)
