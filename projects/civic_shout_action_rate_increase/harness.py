@@ -199,7 +199,9 @@ class RunResultMetadata(BaseModel):
     run_id: str
     project: str
     comparison_group: str
-    scope: Literal["smoke", "reproduction", "comparison", "champion_candidate", "fast_iter"]
+    scope: Literal[
+        "smoke", "reproduction", "comparison", "champion_candidate", "fast_iter", "comparison_fast"
+    ]
     status: str = "completed"
     verdict: str | None = None
     recorded_at_utc: Any = None
@@ -436,7 +438,7 @@ class CivicShoutHarnessResponse(HarnessResponse):
 
 
 def _is_fast_iter(scope: str) -> bool:
-    return scope == "fast_iter"
+    return scope in ("fast_iter", "comparison_fast")
 
 
 # ---------------------------------------------------------------------------
@@ -1632,13 +1634,17 @@ def harness(
     Primary metric: roc_auc_residualized_user_main_effect_x_email_popularity_pair.
     User main effect computed per-fold via LightGBM (train/test split). Email confound
     computed on FULL data (Laplace-smoothed). Old RFM metric kept as secondary.
+
+    Scopes: smoke, reproduction, comparison (8-fold, 500 resamples, decision-bearing),
+    champion_candidate (8-fold, 500 resamples, full secondary), fast_iter (3-fold, 100 resamples,
+    directional only), comparison_fast (4-fold, 100 resamples, pilot-only — not decision-bearing).
     """
     wall_start = time.perf_counter()
     # T4.4: default resamples adapts to scope; callers can always override explicitly.
     if bootstrap_n_resamples is None:
         bootstrap_n_resamples = 100 if _is_fast_iter(scope) else 500
     # T3.2: supplementary single-confound residualizations are expensive (16 isotonic fits).
-    # fast_iter always skips (T4.5); champion_candidate always runs; comparison defaults off.
+    # fast_iter and comparison_fast always skip; champion_candidate always runs; comparison defaults off.
     if _is_fast_iter(scope):
         report_supplementary = False
     elif report_supplementary is None:
@@ -1806,7 +1812,12 @@ def harness(
     if len(folds) == 0:
         raise ValueError("No valid quarterly walk-forward folds found. Check date range in data.")
 
-    if _is_fast_iter(scope) and len(folds) > 3:
+    if scope == "comparison_fast" and len(folds) > 4:
+        # T2c: 4-fold pilot tier — evenly spaced quarters (Q1/Q2/Q3/Q4 of temporal range).
+        step = (len(folds) - 1) / 3
+        indices = [round(i * step) for i in range(4)]
+        folds = [folds[i] for i in indices]
+    elif scope == "fast_iter" and len(folds) > 3:
         # T4.2: subsample to 3 folds (first/middle/last) to preserve temporal structure
         # while cutting ~60-70% of per-fold loop wall. Uses all folds when fewer than 3.
         mid = len(folds) // 2

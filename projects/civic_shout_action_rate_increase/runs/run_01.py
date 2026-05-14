@@ -133,6 +133,19 @@ def _write_result(
     )
 
 
+def _should_escalate_to_comparison(mean: float, ci_half_width: float, delta: float = 0.001) -> bool:
+    """Return True if the comparison_fast pilot result is ambiguous (warrants full comparison).
+
+    Returns False (skip full comparison) when the CI is clearly above or below the
+    null boundary 0.5 ± delta.  Returns True (escalate) when ambiguous.
+    """
+    lower = mean - 1.96 * ci_half_width
+    upper = mean + 1.96 * ci_half_width
+    clearly_above = lower > 0.5 + delta
+    clearly_below = upper < 0.5 - delta
+    return not (clearly_above or clearly_below)
+
+
 def main(
     run_id: str = "run_01",
     sample_frac: float | None = 0.05,
@@ -142,6 +155,7 @@ def main(
     profile: bool = False,
     bootstrap_n_resamples: int | None = None,
     auto_promote: bool = False,
+    comparison_fast_first: bool = False,
 ) -> None:
     user_emails_df = user_emails_cache.get(3)
     features_df = recency_feature_cache.get(1)
@@ -200,6 +214,59 @@ def main(
         txt_path.write_text(stream.getvalue())
     else:
         _run_harness_inner()
+
+    # T2c: comparison_fast_first — run 4-fold pilot, escalate to full comparison only when ambiguous.
+    if comparison_fast_first:
+        assert isinstance(response, HarnessResponse)
+        pilot_mean = response.summary.primary_metric_value
+        ci_low_pilot = response.metrics.primary.ci_low
+        ci_high_pilot = response.metrics.primary.ci_high
+        ci_half_width: float = 0.0
+        if ci_low_pilot is not None and ci_high_pilot is not None:
+            ci_half_width = (ci_high_pilot - ci_low_pilot) / 2.0
+        lower = pilot_mean - 1.96 * ci_half_width
+        upper = pilot_mean + 1.96 * ci_half_width
+
+        _write_result(response, metadata, run_dir)
+
+        if not _should_escalate_to_comparison(pilot_mean, ci_half_width):
+            print(
+                f"[comparison_fast pilot] clear directional signal "
+                f"(mean4={pilot_mean:.4f}, CI=[{lower:.4f}, {upper:.4f}]); "
+                f"skipping full comparison run."
+            )
+            return
+
+        print(
+            f"[comparison_fast pilot] ambiguous "
+            f"(|mean4 - 0.5| within CI ± 0.001); running full comparison."
+        )
+        full_run_id = run_id + "_comparison"
+        full_run_dir = _RUNS_DIR / full_run_id
+        full_artifacts_dir = full_run_dir / "artifacts"
+        full_run_dir.mkdir(parents=True, exist_ok=True)
+        full_artifacts_dir.mkdir(exist_ok=True)
+
+        full_metadata = RunResultMetadata(
+            run_id=full_run_id,
+            project="civic_shout_action_rate_increase",
+            comparison_group=comparison_group,
+            scope="comparison",
+            recorded_at_utc=datetime.now(timezone.utc).isoformat(),
+            git_sha=sha,
+            data_fingerprint=None,
+        )
+        full_kwargs = _build_harness_kwargs(
+            joined,
+            full_artifacts_dir,
+            sample_frac,
+            sample_seed,
+            "comparison",
+            bootstrap_n_resamples,
+        )
+        full_response = harness(**full_kwargs)
+        _write_result(full_response, full_metadata, full_run_dir)
+        return
 
     # T4.6: adaptive promotion gate — auto-promote fast_iter to comparison when
     # the directional verdict is unambiguous (|primary - 0.5| > 1.5 × CI half-width).
@@ -302,8 +369,15 @@ if __name__ == "__main__":
         "--scope",
         type=str,
         default="comparison",
-        choices=["smoke", "comparison", "champion_candidate", "reproduction", "fast_iter"],
-        help="Evaluation scope (default: comparison). Use fast_iter for rapid directional iteration.",
+        choices=[
+            "smoke",
+            "comparison",
+            "champion_candidate",
+            "reproduction",
+            "fast_iter",
+            "comparison_fast",
+        ],
+        help="Evaluation scope (default: comparison). Use fast_iter for rapid directional iteration, comparison_fast for 4-fold pilot.",
     )
     parser.add_argument(
         "--auto-promote",
@@ -315,10 +389,24 @@ if __name__ == "__main__":
             "Rejected if --scope is not fast_iter."
         ),
     )
+    parser.add_argument(
+        "--comparison-fast-first",
+        action="store_true",
+        default=False,
+        dest="comparison_fast_first",
+        help=(
+            "Run scope=comparison_fast (4-fold pilot) first. If directional signal is clear "
+            "(CI excludes 0.5 ± 0.001), skip the full comparison. Otherwise escalate to "
+            "scope=comparison with a separate run_id (<run_id>_comparison)."
+        ),
+    )
     args = parser.parse_args()
 
     if args.auto_promote and args.scope != "fast_iter":
         parser.error("--auto-promote requires --scope fast_iter")
+
+    if args.comparison_fast_first and args.scope != "comparison_fast":
+        parser.error("--comparison-fast-first requires --scope comparison_fast")
 
     main(
         run_id=args.run_id,
@@ -327,4 +415,5 @@ if __name__ == "__main__":
         bootstrap_n_resamples=args.bootstrap_n_resamples,
         scope=args.scope,
         auto_promote=args.auto_promote,
+        comparison_fast_first=args.comparison_fast_first,
     )
