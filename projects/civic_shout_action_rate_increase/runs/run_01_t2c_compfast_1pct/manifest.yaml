@@ -1,0 +1,38 @@
+run_id: run_01_t2c_compfast_1pct
+project: civic_shout_action_rate_increase
+comparison_group: action_rate_increase_temporal_holdout_residualized_auc_v1
+scope: comparison_fast
+git_sha: a987439
+recorded_at_utc: '2026-05-14T22:10:51.441593+00:00'
+outcome:
+  version: v1
+  name: actioned_24h_per_send
+features: {}
+data:
+  source_cache: civic_shout_user_emails
+  source_version: 3
+  n_rows: 1290194
+  fingerprint: 'null'
+model:
+  type: lightgbm_classifier
+  args:
+    objective: binary
+    metric: auc
+    num_leaves: 15
+    learning_rate: 0.05
+    n_estimators: 100
+    min_data_in_leaf: 200
+    feature_fraction: 0.9
+    bagging_fraction: 0.9
+    bagging_freq: 5
+    verbose: -1
+    n_jobs: -1
+    random_state: 42
+    force_col_wise: true
+    feature_pre_filter: true
+sample:
+  frac: 0.01
+  seed: 42
+performance:
+  elapsed_seconds: 31.943750125006773
+  bottleneck_stage: data_conversion
