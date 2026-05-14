@@ -28,7 +28,7 @@ VENV_ACTIVATE := .venv/bin/activate
 .DEFAULT_GOAL := help
 .PHONY: help \
         autoloop autoloop-once autoloop-dashboard autoloop-dashboard-restart autoloop-up autoloop-render \
-        autoloop-prereqs autoloop-status autoloop-stop \
+        autoloop-prereqs autoloop-status autoloop-stop autoloop-init-ledger \
         dev-setup install-deps \
         leaderboard-civic-shout leaderboard-render-civic-shout
 
@@ -47,6 +47,7 @@ help:
 	@echo "  make autoloop-prereqs           Check prereqs for current project"
 	@echo "  make autoloop-status            Print current state from JSON files"
 	@echo "  make autoloop-stop              Graceful stop (after current iter)"
+	@echo "  make autoloop-init-ledger       Prepend sentinel to unmanaged ledgers"
 	@echo ""
 	@echo "Options (override on the command line)"
 	@echo "─────────────────────────────────────────────────────────────────"
@@ -109,6 +110,9 @@ autoloop-stop:
 	@echo ">> STOP sentinel placed at projects/$(PROJECT)/autoloop/STOP"
 	@echo ">> The autoloop will exit after the current iteration completes."
 	@echo ">> Remove the sentinel with: rm projects/$(PROJECT)/autoloop/STOP"
+
+autoloop-init-ledger:
+	@. $(VENV_ACTIVATE) && python scripts/autoloop-init-ledger.py --project $(PROJECT)
 
 # ─── Dev setup ─────────────────────────────────────────────────────────────
 
