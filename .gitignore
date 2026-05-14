@@ -34,3 +34,6 @@ data/projects/civic_shout_content_routing/exploration/wide_engagement.parquet
 
 # Adversarial review / second-opinion artifacts
 second-opinions/
+
+# Root-level scratch dir used by EDA exploration scripts (not the per-project runs/)
+/runs/
