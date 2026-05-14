@@ -942,6 +942,8 @@ def _user_block_bootstrap(
     seed: int = 42,
     n_jobs: int = -1,
     bootstrap_n_jobs: int = -1,
+    *,
+    sorted_user_map: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
 ) -> np.ndarray:
     """Sample whole users with replacement, preserving multiplicity, recompute AUC per resample.
 
@@ -952,7 +954,12 @@ def _user_block_bootstrap(
     unique_users = np.unique(user_ids)
     n_users = len(unique_users)
 
-    y_sorted, s_sorted, row_to_user_idx = _build_sorted_user_map(y, s_resid, user_ids, unique_users)
+    if sorted_user_map is None:
+        y_sorted, s_sorted, row_to_user_idx = _build_sorted_user_map(
+            y, s_resid, user_ids, unique_users
+        )
+    else:
+        y_sorted, s_sorted, row_to_user_idx = sorted_user_map
 
     child_seeds = rng.integers(0, 2**32 - 1, size=n_boot)
     uniform_pvals = np.full(n_users, 1.0 / n_users)
@@ -1008,9 +1015,14 @@ def _pooled_user_block_bootstrap_mean_of_folds(
         uids = r["user_ids"]
         fold_unique = np.unique(uids)
         n_fold = len(fold_unique)
-        y_s, s_s, fold_row_to_user_idx = _build_sorted_user_map(
-            r["y_test"], r["s_resid"], uids, fold_unique
-        )
+        if "y_sorted" in r:
+            y_s = r["y_sorted"]
+            s_s = r["s_sorted"]
+            fold_row_to_user_idx = r["row_to_user_idx"]
+        else:
+            y_s, s_s, fold_row_to_user_idx = _build_sorted_user_map(
+                r["y_test"], r["s_resid"], uids, fold_unique
+            )
         # For each global user, its index in fold_unique; -1 if absent.
         pos = np.searchsorted(fold_unique, unique_users_global)
         pos_clipped = np.clip(pos, 0, n_fold - 1)
@@ -1485,6 +1497,14 @@ def _run_one_fold(
     _iso_fold_seconds = _iso_secs_primary + _iso_secs_old
 
     user_ids_test = test_df["user_id"].to_numpy()
+    unique_users_test = np.unique(user_ids_test)
+
+    # Precompute once per fold; reused by _user_block_bootstrap and stored for
+    # _pooled_user_block_bootstrap_mean_of_folds to avoid a duplicate call.
+    _fold_sorted_user_map = _build_sorted_user_map(
+        y_test, s_resid_xfit, user_ids_test, unique_users_test
+    )
+    y_sorted_fold, s_sorted_fold, row_to_user_idx_fold = _fold_sorted_user_map
 
     _t_boot = time.perf_counter()
     boot_aucs = _user_block_bootstrap(
@@ -1495,6 +1515,7 @@ def _run_one_fold(
         seed=seed,
         n_jobs=-1,
         bootstrap_n_jobs=bootstrap_n_jobs,
+        sorted_user_map=_fold_sorted_user_map,
     )
     _boot_seconds = time.perf_counter() - _t_boot
     ci_low = float(np.nanquantile(boot_aucs, 0.025))
@@ -1540,6 +1561,10 @@ def _run_one_fold(
         "c_u_main_effect_test": c_u_main_effect_test,
         "c_e_test": c_e_test,
         "user_ids": user_ids_test,
+        "unique_users": unique_users_test,
+        "y_sorted": y_sorted_fold,
+        "s_sorted": s_sorted_fold,
+        "row_to_user_idx": row_to_user_idx_fold,
         "test_df": test_df,
         "train_df": train_df,
         "n_train": len(train_df),
