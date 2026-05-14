@@ -446,84 +446,6 @@ def _is_fast_iter(scope: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _user_prior_engagement_score(df: pl.DataFrame) -> pl.Series:
-    """log1p(cumulative prior actioned_24h per user, strict prior).
-
-    Aggregates to (user_id, date_sent) level first so all rows sharing the
-    same date receive the same score — matching the audit's strict date_sent < t
-    semantics. Within-date row order is irrelevant to the score.
-    """
-    date_level = (
-        df.group_by(["user_id", "date_sent"])
-        .agg(pl.col("actioned_24h").cast(pl.Int32).sum().alias("_acts_on_date"))
-        .sort(["user_id", "date_sent"])
-        .with_columns(
-            pl.col("_acts_on_date")
-            .cum_sum()
-            .shift(1)
-            .over("user_id")
-            .fill_null(0)
-            .alias("_prior_action_count")
-        )
-        .with_columns(
-            (pl.col("_prior_action_count") + 1)
-            .log(base=2.718281828459045)
-            .alias("user_prior_engagement_score")
-        )
-        .select(["user_id", "date_sent", "user_prior_engagement_score"])
-    )
-    return (
-        df.sort(["user_id", "email_id", "date_sent"])
-        .join(date_level, on=["user_id", "date_sent"], how="left")
-        .get_column("user_prior_engagement_score")
-    )
-
-
-def _email_popularity_score(df: pl.DataFrame) -> pl.Series:
-    """Laplace-smoothed prior action rate per email, strict prior.
-
-    score = (cumulative_prior_actions + 1) / (cumulative_prior_sends + 2)
-    First send of any new email: score = 0.5 (uninformative prior).
-
-    Aggregates to date level first so that all rows sharing the same (email_id,
-    date_sent) receive the same score — matching the strict-prior semantics of
-    the audit (prior = date_sent < t, not <=).
-    """
-    date_level = (
-        df.group_by(["email_id", "date_sent"])
-        .agg(
-            pl.len().cast(pl.Int64).alias("_sends_on_date"),
-            pl.col("actioned_24h").cast(pl.Int32).sum().alias("_acts_on_date"),
-        )
-        .sort(["email_id", "date_sent"])
-        .with_columns(
-            pl.col("_sends_on_date")
-            .cum_sum()
-            .shift(1)
-            .over("email_id")
-            .fill_null(0)
-            .alias("_prior_sends"),
-            pl.col("_acts_on_date")
-            .cum_sum()
-            .shift(1)
-            .over("email_id")
-            .fill_null(0)
-            .alias("_prior_acts"),
-        )
-        .with_columns(
-            ((pl.col("_prior_acts") + 1) / (pl.col("_prior_sends") + 2)).alias(
-                "email_popularity_score"
-            )
-        )
-        .select(["email_id", "date_sent", "email_popularity_score"])
-    )
-    return (
-        df.sort(["user_id", "email_id", "date_sent"])
-        .join(date_level, on=["email_id", "date_sent"], how="left")
-        .get_column("email_popularity_score")
-    )
-
-
 def _compute_confound_scores_full_data(full_df: pl.DataFrame) -> pl.DataFrame:
     """Compute confound scores on the FULL frame; caller joins to sample.
 
@@ -1033,12 +955,11 @@ def _user_block_bootstrap(
     y_sorted, s_sorted, row_to_user_idx = _build_sorted_user_map(y, s_resid, user_ids, unique_users)
 
     child_seeds = rng.integers(0, 2**32 - 1, size=n_boot)
+    uniform_pvals = np.full(n_users, 1.0 / n_users)
 
     def _one_replicate(rep_seed: int) -> float:
         rep_rng = np.random.default_rng(rep_seed)
-        user_multiplicity = rep_rng.multinomial(n_users, np.full(n_users, 1.0 / n_users)).astype(
-            np.int32, copy=False
-        )
+        user_multiplicity = rep_rng.multinomial(n_users, uniform_pvals).astype(np.int32, copy=False)
         weights = user_multiplicity[row_to_user_idx].astype(np.int64, copy=False)
         return _weighted_rank_auc_numba(
             y_sorted.astype(np.int64, copy=False),
@@ -1100,12 +1021,13 @@ def _pooled_user_block_bootstrap_mean_of_folds(
         fold_sorted_data.append((y_s, s_s, fold_row_to_user_idx, local_idx, in_mask, n_fold))
 
     child_seeds = rng.integers(0, 2**32 - 1, size=n_boot)
+    uniform_pvals_global = np.full(n_users_global, 1.0 / n_users_global)
 
     def _one_replicate(rep_seed: int) -> float:
         rep_rng = np.random.default_rng(rep_seed)
-        counts_global = rep_rng.multinomial(
-            n_users_global, np.full(n_users_global, 1.0 / n_users_global)
-        ).astype(np.int32, copy=False)
+        counts_global = rep_rng.multinomial(n_users_global, uniform_pvals_global).astype(
+            np.int32, copy=False
+        )
         fold_aucs_replicate: list[float] = []
         for (
             y_sorted,
@@ -1163,26 +1085,24 @@ def _quarterly_folds(
     First quarter (no prior history) is skipped.
     Cumulative-train: fold k trains on quarters [Q1..Q_{k-1}].
     """
-    df = df.with_columns(
-        pl.col(date_col).dt.year().alias("_year"),
-        pl.col(date_col).dt.quarter().alias("_quarter"),
-    ).with_columns(
-        (pl.col("_year").cast(pl.Utf8) + "-Q" + pl.col("_quarter").cast(pl.Utf8)).alias("_q_label")
-    )
+    quarters = df.select(
+        (
+            pl.col(date_col).dt.year().cast(pl.Utf8)
+            + "-Q"
+            + pl.col(date_col).dt.quarter().cast(pl.Utf8)
+        )
+    ).to_series()
 
-    quarter_labels: list[str] = (
-        df.select("_q_label").unique().sort("_q_label").get_column("_q_label").to_list()
-    )
+    quarter_labels: list[str] = sorted(set(quarters.to_list()))
 
     folds = []
     for k, q_label in enumerate(quarter_labels):
         if k == 0:
             continue
-        train_quarters = quarter_labels[:k]
-        train_df = df.filter(pl.col("_q_label").is_in(train_quarters)).drop(
-            ["_year", "_quarter", "_q_label"]
-        )
-        test_df = df.filter(pl.col("_q_label") == q_label).drop(["_year", "_quarter", "_q_label"])
+        train_mask = quarters.is_in(quarter_labels[:k])
+        test_mask = quarters == q_label
+        train_df = df.filter(train_mask)
+        test_df = df.filter(test_mask)
         if len(train_df) == 0 or len(test_df) == 0:
             continue
         folds.append((q_label, train_df, test_df))
@@ -1209,6 +1129,18 @@ def _compute_psi(expected: np.ndarray, actual: np.ndarray, n_bins: int = 10) -> 
     return float(np.sum((act_pct - exp_pct) * np.log(act_pct / exp_pct)))
 
 
+def _psi_against_ref(
+    actual: np.ndarray,
+    ref_counts: np.ndarray,
+    ref_bins: np.ndarray,
+) -> float:
+    """PSI of `actual` against a pre-computed reference histogram."""
+    act_counts, _ = np.histogram(actual, bins=ref_bins)
+    exp_pct = (ref_counts + 1e-8) / (ref_counts.sum() + 1e-8 * len(ref_counts))
+    act_pct = (act_counts + 1e-8) / (act_counts.sum() + 1e-8 * len(act_counts))
+    return float(np.sum((act_pct - exp_pct) * np.log(act_pct / exp_pct)))
+
+
 # ---------------------------------------------------------------------------
 # Tenure bucket helper
 # ---------------------------------------------------------------------------
@@ -1223,12 +1155,11 @@ def _assign_tenure_bucket(df: pl.DataFrame) -> pl.DataFrame:
         .cast(pl.Int64)
         .alias("_tenure_days")
     )
-    bucket_expr = pl.lit("2yr+")
-    for break_val, label in zip(reversed(_TENURE_BREAKS), reversed(_TENURE_LABELS[:-1])):
-        bucket_expr = (
-            pl.when(pl.col("_tenure_days") <= break_val).then(pl.lit(label)).otherwise(bucket_expr)
-        )
-    return df.with_columns(bucket_expr.alias("tenure_bucket")).drop(["first_send", "_tenure_days"])
+    return df.with_columns(
+        pl.col("_tenure_days")
+        .cut(breaks=_TENURE_BREAKS, labels=_TENURE_LABELS)
+        .alias("tenure_bucket")
+    ).drop(["first_send", "_tenure_days"])
 
 
 # ---------------------------------------------------------------------------
@@ -1880,9 +1811,6 @@ def harness(
     n_folds = len(folds)
     fold_seeds = rng_folds.integers(0, 2**32 - 1, size=n_folds)
 
-    # Pre-materialize fold slices (#23 — build once, pickle once per worker).
-    fold_pairs = [(q_label, train_df, test_df) for q_label, train_df, test_df in folds]
-
     # CPU utilization measurement across the parallel fold batch.
     import threading
 
@@ -1923,7 +1851,7 @@ def harness(
             scope=scope,
             report_old_rfm=_report_old_rfm,
         )
-        for k, (q_label, train_df, test_df) in enumerate(fold_pairs)
+        for k, (q_label, train_df, test_df) in enumerate(folds)
     )  # type: ignore[assignment]
 
     t_fold_wall_total = time.perf_counter() - t_fold_wall_start
@@ -2135,13 +2063,15 @@ def harness(
     # PSI: train vs test score distribution
     psi_train_test = _compute_psi(s_train_all, s_all)
 
-    # PSI by tenure bucket
+    # PSI by tenure bucket — hoist reference histogram once for all 7 buckets
+    _psi_ref_bins = np.linspace(0, 1, 11)
+    _psi_ref_bins[0], _psi_ref_bins[-1] = -np.inf, np.inf
+    _psi_ref_counts, _psi_ref_edges = np.histogram(s_all, bins=_psi_ref_bins)
     tenure_psi_vals: list[float] = []
     for label in _TENURE_LABELS:
         mask = tenure_all == label
         if mask.sum() >= 20:
-            # compare to overall test distribution
-            psi = _compute_psi(s_all, s_all[mask])
+            psi = _psi_against_ref(s_all[mask], _psi_ref_counts, _psi_ref_edges)
             tenure_psi_vals.append(psi)
     max_tenure_psi = float(max(tenure_psi_vals)) if tenure_psi_vals else 0.0
 
