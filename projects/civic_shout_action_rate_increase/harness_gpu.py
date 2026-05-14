@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import os
 import time
-from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
@@ -12,8 +11,6 @@ import polars as pl
 import psutil
 from joblib import Parallel, delayed
 from lightgbm import LGBMClassifier
-from pydantic import BaseModel, ConfigDict, Field
-from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import average_precision_score, roc_auc_score
 
 from libs.perf_equivalence import compute_predictions_hash
@@ -25,7 +22,6 @@ from projects.civic_shout_action_rate_increase.harness import (
     _FORBIDDEN_COLS,
     _TENURE_LABELS,
     CivicShoutHarnessResponse,
-    CivicShoutResultRow,
     ConfoundJoinError,
     HarnessArtifact,
     HarnessDataProfile,
@@ -40,9 +36,6 @@ from projects.civic_shout_action_rate_increase.harness import (
     HarnessSummary,
     LeakageError,
     ML_Model_Config,
-    ML_Model_Type,
-    RunResultMetadata,
-    RunResultRow,
     _assert_no_future_leak,
     _assign_tenure_bucket,
     _compute_cell_class_balance_diagnostic,
@@ -58,7 +51,6 @@ from projects.civic_shout_action_rate_increase.harness import (
 from projects.civic_shout_action_rate_increase.harness_cache import (
     HarnessCache,
     data_fingerprint,
-    fold_train_fingerprint,
 )
 
 # ---------------------------------------------------------------------------
@@ -420,7 +412,9 @@ def harness(
     t_fold_wall_start = time.perf_counter()
 
     _effective_fold_jobs = fold_n_jobs if fold_n_jobs != 1 else 1
-    raw_fold_results: list[dict[str, Any]] = Parallel(n_jobs=_effective_fold_jobs, backend="loky")(
+    raw_fold_results: list[dict[str, Any]] = Parallel(
+        n_jobs=_effective_fold_jobs, prefer="threads"
+    )(
         delayed(_run_one_fold_gpu)(
             train_df,
             test_df,
@@ -954,7 +948,7 @@ def harness(
             parallelism=HarnessParallelism(
                 outer_n_jobs=_effective_fold_jobs,
                 inner_threads=_inner_threads,
-                backend="loky" if _effective_fold_jobs != 1 else "sequential",
+                backend="threading" if _effective_fold_jobs != 1 else "sequential",
                 cpu_count_observed=cpu_count,
                 cpu_utilization_pct=cpu_util,
             ),

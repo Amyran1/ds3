@@ -95,7 +95,7 @@ class FeatureCache:
                 msg = f"Feature cache miss for {self.name} v{version}. Expected local path: {path}; remote: {self.remote_uri(version)}"
                 raise FileNotFoundError(msg) from exc
 
-        df = pl.read_parquet(path)
+        df = pl.scan_parquet(path).collect()
         self._validate_columns(df, version)
         logger.info("Loaded %s v%d: %d rows", self.name, version, len(df))
         return df

@@ -40,10 +40,10 @@ _FEATURE_COLS = [
 _LGBM_ARGS = {
     "objective": "binary",
     "metric": "auc",
-    "num_leaves": 31,
+    "num_leaves": 15,
     "learning_rate": 0.05,
-    "n_estimators": 200,
-    "min_data_in_leaf": 100,
+    "n_estimators": 100,
+    "min_data_in_leaf": 200,
     "feature_fraction": 0.9,
     "bagging_fraction": 0.9,
     "bagging_freq": 5,

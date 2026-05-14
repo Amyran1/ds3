@@ -7,6 +7,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
+import numba
 import numpy as np
 import polars as pl
 import psutil
@@ -126,6 +127,10 @@ class HarnessStageTiming(BaseModel):
         "predict",
         "score",
         "aggregate",
+        "residualize_scores",
+        "cross_fit_isotonic",
+        "bootstrap_ci",
+        "persist_predictions",
     ]
     seconds: float
     owner: Literal["harness", "model"]
@@ -194,7 +199,7 @@ class RunResultMetadata(BaseModel):
     run_id: str
     project: str
     comparison_group: str
-    scope: Literal["smoke", "reproduction", "comparison", "champion_candidate"]
+    scope: Literal["smoke", "reproduction", "comparison", "champion_candidate", "fast_iter"]
     status: str = "completed"
     verdict: str | None = None
     recorded_at_utc: Any = None
@@ -426,6 +431,15 @@ class CivicShoutHarnessResponse(HarnessResponse):
 
 
 # ---------------------------------------------------------------------------
+# Fast-iter mode gate
+# ---------------------------------------------------------------------------
+
+
+def _is_fast_iter(scope: str) -> bool:
+    return scope == "fast_iter"
+
+
+# ---------------------------------------------------------------------------
 # Confound score helpers  (computed on FULL data, not the sample)
 # ---------------------------------------------------------------------------
 
@@ -644,12 +658,13 @@ def _compute_residualized_auc_cross_fit(
     c_u_test: np.ndarray,
     c_e_test: np.ndarray,
     seed: int = 42,
-) -> tuple[float, float, float, np.ndarray]:
+) -> tuple[float, float, float, np.ndarray, float]:
     """Two-way cross-fit sequential isotonic residualization.
 
-    Returns (auc_residualized, auc_direction_a, auc_direction_b, s_resid_xfit).
+    Returns (auc_residualized, auc_direction_a, auc_direction_b, s_resid_xfit, iso_seconds).
     s_resid_xfit is aligned to the input row order: each row's residual is
     the output of the smoother fitted on the half it was NOT in.
+    iso_seconds is the cumulative wall time spent on IsotonicRegression.fit() calls only.
     """
     rng = np.random.default_rng(seed)
     n = len(y_test)
@@ -662,53 +677,253 @@ def _compute_residualized_auc_cross_fit(
     y_b, s_b = y_test[half_b_idx], s_test[half_b_idx]
     c_u_b, c_e_b = c_u_test[half_b_idx], c_e_test[half_b_idx]
 
+    _iso_seconds = 0.0
+
     def _rank_normalize(arr: np.ndarray) -> np.ndarray:
         from scipy.stats import rankdata
 
         return rankdata(arr, method="average") / len(arr)
 
+    # T1.3: precompute confound ranks once per half (each set of 4 ranks is used twice
+    # across the two _residualize_sequential calls — once as fit-side, once as apply-side).
+    rank_u_a = _rank_normalize(c_u_a)
+    rank_e_a = _rank_normalize(c_e_a)
+    rank_u_b = _rank_normalize(c_u_b)
+    rank_e_b = _rank_normalize(c_e_b)
+
     def _residualize_sequential(
         s_fit: np.ndarray,
-        c_u_fit: np.ndarray,
-        c_e_fit: np.ndarray,
+        r_u_fit: np.ndarray,
+        r_e_fit: np.ndarray,
         s_apply: np.ndarray,
-        c_u_apply: np.ndarray,
-        c_e_apply: np.ndarray,
+        r_u_apply: np.ndarray,
+        r_e_apply: np.ndarray,
     ) -> np.ndarray:
-        r_u_fit = _rank_normalize(c_u_fit)
-        r_e_fit = _rank_normalize(c_e_fit)
-        r_u_apply = _rank_normalize(c_u_apply)
-        r_e_apply = _rank_normalize(c_e_apply)
+        nonlocal _iso_seconds
 
         iso_u = IsotonicRegression(out_of_bounds="clip")
+        _t_iso = time.perf_counter()
         iso_u.fit(r_u_fit, s_fit)
+        _iso_seconds += time.perf_counter() - _t_iso
         s_hat_u_fit = iso_u.predict(r_u_fit)
         s_hat_u_apply = iso_u.predict(r_u_apply)
 
         resid_fit = s_fit - s_hat_u_fit
 
         iso_e = IsotonicRegression(out_of_bounds="clip")
+        _t_iso = time.perf_counter()
         iso_e.fit(r_e_fit, resid_fit)
+        _iso_seconds += time.perf_counter() - _t_iso
         s_hat_e_apply = iso_e.predict(r_e_apply)
 
         return s_apply - s_hat_u_apply - s_hat_e_apply
 
-    resid_b = _residualize_sequential(s_a, c_u_a, c_e_a, s_b, c_u_b, c_e_b)
-    resid_a = _residualize_sequential(s_b, c_u_b, c_e_b, s_a, c_u_a, c_e_a)
+    resid_b = _residualize_sequential(s_a, rank_u_a, rank_e_a, s_b, rank_u_b, rank_e_b)
+    resid_a = _residualize_sequential(s_b, rank_u_b, rank_e_b, s_a, rank_u_a, rank_e_a)
 
     s_resid_xfit = np.empty_like(s_test)
     s_resid_xfit[half_a_idx] = resid_a
     s_resid_xfit[half_b_idx] = resid_b
 
     if len(np.unique(y_b)) < 2 or len(np.unique(y_a)) < 2:
-        return 0.5, 0.5, 0.5, s_resid_xfit
+        return 0.5, 0.5, 0.5, s_resid_xfit, _iso_seconds
 
     auc_b = float(roc_auc_score(y_b, resid_b))
     auc_a = float(roc_auc_score(y_a, resid_a))
 
     n_a, n_b = len(half_a_idx), len(half_b_idx)
     auc_combined = (n_a * auc_a + n_b * auc_b) / (n_a + n_b)
-    return auc_combined, auc_a, auc_b, s_resid_xfit
+    return auc_combined, auc_a, auc_b, s_resid_xfit, _iso_seconds
+
+
+# ---------------------------------------------------------------------------
+# Single-fit isotonic residualization (T4.3 — fast_iter only)
+# ---------------------------------------------------------------------------
+
+
+def _compute_residualized_auc_single_fit(
+    y_test: np.ndarray,
+    s_test: np.ndarray,
+    c_u_test: np.ndarray,
+    c_e_test: np.ndarray,
+    seed: int = 42,
+) -> tuple[float, float, float, np.ndarray, float]:
+    """Single-fit isotonic residualization (T4.3 — fast_iter mode only).
+
+    Fits isotonic regression ONCE on the full test fold and applies it to itself.
+    Single-fit adds test-noise-leak risk; OK for directional fast-iter verdicts.
+    Returns same 5-tuple as _compute_residualized_auc_cross_fit for drop-in routing.
+    """
+    from scipy.stats import rankdata
+
+    _iso_seconds = 0.0
+
+    def _rank_normalize(arr: np.ndarray) -> np.ndarray:
+        return rankdata(arr, method="average") / len(arr)
+
+    rank_u = _rank_normalize(c_u_test)
+    rank_e = _rank_normalize(c_e_test)
+
+    iso_u = IsotonicRegression(out_of_bounds="clip")
+    _t = time.perf_counter()
+    iso_u.fit(rank_u, s_test)
+    _iso_seconds += time.perf_counter() - _t
+    resid = s_test - iso_u.predict(rank_u)
+
+    iso_e = IsotonicRegression(out_of_bounds="clip")
+    _t = time.perf_counter()
+    iso_e.fit(rank_e, resid)
+    _iso_seconds += time.perf_counter() - _t
+    s_resid = resid - iso_e.predict(rank_e)
+
+    if len(np.unique(y_test)) < 2:
+        return 0.5, 0.5, 0.5, s_resid, _iso_seconds
+
+    auc = float(roc_auc_score(y_test, s_resid))
+    return auc, auc, auc, s_resid, _iso_seconds
+
+
+# ---------------------------------------------------------------------------
+# Vectorized rank-based AUC (T1.2 — replaces sklearn in bootstrap hot loop)
+# ---------------------------------------------------------------------------
+
+
+def _rank_auc_numpy(y: np.ndarray, scores: np.ndarray) -> float:
+    from scipy.stats import rankdata
+
+    if np.any(np.isnan(y)) or np.any(np.isnan(scores)):
+        raise ValueError("scores/labels contain NaN")
+    n_pos = int(np.sum(y))
+    n_neg = len(y) - n_pos
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+    ranks = rankdata(scores, method="average")
+    rank_sum_pos = float(np.sum(ranks[y == 1]))
+    return (rank_sum_pos - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
+
+
+# ---------------------------------------------------------------------------
+# Weighted-rank AUC (T2.1 — pre-sorted input, integer multiplicity weights)
+# ---------------------------------------------------------------------------
+
+
+def _weighted_rank_auc(
+    y_sorted_asc: np.ndarray,
+    s_sorted_asc: np.ndarray,
+    weights: np.ndarray,
+) -> float:
+    """AUC via Mann-Whitney U prefix-sum on a pre-sorted (ascending score) array.
+
+    Args:
+        y_sorted_asc: Binary labels in ascending-score order (already sorted).
+        s_sorted_asc: Scores in ascending order (same permutation as y_sorted_asc).
+        weights: Integer multiplicity per row (e.g. 2 = row drawn twice in resample).
+
+    Returns float("nan") for degenerate inputs (W_pos == 0 or W_neg == 0).
+
+    Tie handling: rows with identical scores form a tie group. Each positive
+    is credited with (cum_neg_below + W_neg_in_group / 2), which is the weighted
+    average-rank identity for the Mann-Whitney U statistic and matches
+    scipy.stats.rankdata(method="average") on the equivalent expanded array.
+    """
+    is_pos = y_sorted_asc == 1
+    w_pos_row = weights * is_pos
+    w_neg_row = weights * ~is_pos
+    W_pos = float(w_pos_row.sum())
+    W_neg = float(w_neg_row.sum())
+    if W_pos == 0.0 or W_neg == 0.0:
+        return float("nan")
+
+    # Vectorized tie-group reduction. Group boundaries = where score changes.
+    # np.add.reduceat at these indices sums each tied-score block in pure C.
+    n = len(s_sorted_asc)
+    if n == 1:
+        group_starts = np.array([0], dtype=np.int64)
+    else:
+        change_mask = np.empty(n, dtype=bool)
+        change_mask[0] = True
+        np.not_equal(s_sorted_asc[1:], s_sorted_asc[:-1], out=change_mask[1:])
+        group_starts = np.flatnonzero(change_mask)
+
+    group_w_pos = np.add.reduceat(w_pos_row.astype(np.float64), group_starts)
+    group_w_neg = np.add.reduceat(w_neg_row.astype(np.float64), group_starts)
+
+    cum_neg_above = np.cumsum(group_w_neg)
+    cum_neg_below = cum_neg_above - group_w_neg  # exclusive prefix sum
+    u_stat = float(np.sum(group_w_pos * (cum_neg_below + group_w_neg * 0.5)))
+
+    return u_stat / (W_pos * W_neg)
+
+
+# ---------------------------------------------------------------------------
+# Numba-JIT weighted-AUC kernel (T3.1)
+# ---------------------------------------------------------------------------
+
+
+@numba.njit(cache=True)
+def _weighted_rank_auc_numba(
+    y_sorted_asc: np.ndarray,
+    s_sorted_asc: np.ndarray,
+    weights: np.ndarray,
+) -> float:
+    n = len(y_sorted_asc)
+    W_pos = 0.0
+    W_neg = 0.0
+    for k in range(n):
+        w = weights[k]
+        if y_sorted_asc[k] == 1:
+            W_pos += w
+        else:
+            W_neg += w
+    if W_pos == 0.0 or W_neg == 0.0:
+        return np.nan
+    cum_neg_below = 0.0
+    u_stat = 0.0
+    i = 0
+    while i < n:
+        j = i + 1
+        while j < n and s_sorted_asc[j] == s_sorted_asc[i]:
+            j += 1
+        group_w_pos = 0.0
+        group_w_neg = 0.0
+        for k in range(i, j):
+            w = weights[k]
+            if y_sorted_asc[k] == 1:
+                group_w_pos += w
+            else:
+                group_w_neg += w
+        u_stat += group_w_pos * (cum_neg_below + group_w_neg * 0.5)
+        cum_neg_below += group_w_neg
+        i = j
+    return u_stat / (W_pos * W_neg)
+
+
+# Warm the JIT at import time so the first real call doesn't pay compile latency.
+_weighted_rank_auc_numba(
+    np.array([1, 0], dtype=np.int64),
+    np.array([0.5, 0.7], dtype=np.float64),
+    np.array([1, 1], dtype=np.int64),
+)
+
+
+def _build_sorted_user_map(
+    y: np.ndarray,
+    s_resid: np.ndarray,
+    user_ids: np.ndarray,
+    unique_users: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Pre-sort by ascending score; return sorted labels, sorted scores, and row→user-index array.
+
+    The returned `row_to_user_idx[i]` gives the index of row i's user in `unique_users`
+    (which is sorted ascending). Used to vectorize per-resample weight construction via
+    `weights = user_multiplicity[row_to_user_idx]`.
+    """
+    sort_idx = np.argsort(s_resid, kind="stable")
+    y_sorted = y[sort_idx]
+    s_sorted = s_resid[sort_idx]
+    uid_sorted = user_ids[sort_idx]
+    row_to_user_idx = np.searchsorted(unique_users, uid_sorted).astype(np.int64)
+    return y_sorted, s_sorted, row_to_user_idx
 
 
 # ---------------------------------------------------------------------------
@@ -725,33 +940,34 @@ def _user_block_bootstrap(
     n_jobs: int = -1,
     bootstrap_n_jobs: int = -1,
 ) -> np.ndarray:
-    """Sample whole users with replacement, preserving multiplicity, recompute AUC per resample."""
+    """Sample whole users with replacement, preserving multiplicity, recompute AUC per resample.
+
+    T2.1: pre-sort scores once per fold, then compute bootstrap AUCs via
+    per-row integer weights rather than full row-index expansion.
+    """
     rng = np.random.default_rng(seed)
     unique_users = np.unique(user_ids)
+    n_users = len(unique_users)
 
-    sort_idx = np.argsort(user_ids, kind="stable")
-    sorted_users = user_ids[sort_idx]
-    boundaries = np.searchsorted(sorted_users, unique_users, side="left")
-    boundaries_end = np.searchsorted(sorted_users, unique_users, side="right")
-    user_to_rows: dict = {
-        u: sort_idx[boundaries[i] : boundaries_end[i]] for i, u in enumerate(unique_users)
-    }
+    y_sorted, s_sorted, row_to_user_idx = _build_sorted_user_map(y, s_resid, user_ids, unique_users)
 
     child_seeds = rng.integers(0, 2**32 - 1, size=n_boot)
 
     def _one_replicate(rep_seed: int) -> float:
         rep_rng = np.random.default_rng(rep_seed)
-        sampled_users = rep_rng.choice(unique_users, size=len(unique_users), replace=True)
-        row_indices = np.concatenate([user_to_rows[u] for u in sampled_users])
-        y_b = y[row_indices]
-        s_b = s_resid[row_indices]
-        if len(np.unique(y_b)) < 2:
-            return 0.5
-        return float(roc_auc_score(y_b, s_b))
+        sampled_users = rep_rng.choice(unique_users, size=n_users, replace=True)
+        sampled_user_idx = np.searchsorted(unique_users, sampled_users)
+        user_multiplicity = np.bincount(sampled_user_idx, minlength=n_users)
+        weights = user_multiplicity[row_to_user_idx].astype(np.int64, copy=False)
+        return _weighted_rank_auc_numba(
+            y_sorted.astype(np.int64, copy=False),
+            s_sorted.astype(np.float64, copy=False),
+            weights,
+        )
 
     _resolved_jobs = bootstrap_n_jobs if bootstrap_n_jobs != -1 else n_jobs
     _effective_jobs = 1 if (_resolved_jobs == 1 or len(y) < 50_000) else _resolved_jobs
-    results = Parallel(n_jobs=_effective_jobs, backend="loky")(
+    results = Parallel(n_jobs=_effective_jobs, prefer="threads")(
         delayed(_one_replicate)(int(s)) for s in child_seeds
     )
     return np.array(results, dtype=np.float64)
@@ -771,58 +987,61 @@ def _pooled_user_block_bootstrap_mean_of_folds(
     each fold's AUC using only the rows belonging to sampled users in
     that fold (with multiplicity preserved), then takes the mean of the
     per-fold AUCs. CI = quantiles of replicate statistics.
+
+    T2.1: pre-sorts scores once per fold; uses weighted-AUC prefix-sum
+    instead of expanded row-index concatenation.
     """
     rng = np.random.default_rng(seed)
 
     all_user_ids = np.concatenate([r["user_ids"] for r in fold_results])
     unique_users = np.unique(all_user_ids)
 
-    fold_user_to_rows: list[dict] = []
+    fold_sorted_data: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
     for r in fold_results:
         uids = r["user_ids"]
-        sort_idx = np.argsort(uids, kind="stable")
-        sorted_uids = uids[sort_idx]
         fold_unique = np.unique(uids)
-        starts = np.searchsorted(sorted_uids, fold_unique, side="left")
-        ends = np.searchsorted(sorted_uids, fold_unique, side="right")
-        fold_user_to_rows.append(
-            {u: sort_idx[starts[i] : ends[i]] for i, u in enumerate(fold_unique)}
+        y_s, s_s, fold_row_to_user_idx = _build_sorted_user_map(
+            r["y_test"], r["s_resid"], uids, fold_unique
         )
+        fold_sorted_data.append((y_s, s_s, fold_row_to_user_idx, fold_unique))
 
     child_seeds = rng.integers(0, 2**32 - 1, size=n_boot)
-
-    fold_ys = [r["y_test"] for r in fold_results]
-    fold_ss = [r["s_resid"] for r in fold_results]
 
     def _one_replicate(rep_seed: int) -> float:
         rep_rng = np.random.default_rng(rep_seed)
         sampled_users = rep_rng.choice(unique_users, size=len(unique_users), replace=True)
         fold_aucs_replicate: list[float] = []
-        for y_fold, s_fold, u_to_rows in zip(fold_ys, fold_ss, fold_user_to_rows):
-            chunks = [u_to_rows[u] for u in sampled_users if u in u_to_rows]
-            if not chunks:
+        for y_sorted, s_sorted_fold, fold_row_to_user_idx, fold_unique in fold_sorted_data:
+            # Vectorized per-user multiplicity restricted to this fold's user set
+            sampled_idx_in_fold = np.searchsorted(fold_unique, sampled_users)
+            sampled_idx_clipped = np.clip(sampled_idx_in_fold, 0, len(fold_unique) - 1)
+            in_fold_mask = fold_unique[sampled_idx_clipped] == sampled_users
+            kept_idx = sampled_idx_in_fold[in_fold_mask]
+            user_multiplicity = np.bincount(kept_idx, minlength=len(fold_unique))
+            if user_multiplicity.sum() == 0:
                 continue
-            row_idx = np.concatenate(chunks)
-            y_b = y_fold[row_idx]
-            s_b = s_fold[row_idx]
-            if len(np.unique(y_b)) < 2:
-                continue
-            fold_aucs_replicate.append(float(roc_auc_score(y_b, s_b)))
+            weights = user_multiplicity[fold_row_to_user_idx].astype(np.int64, copy=False)
+            auc_b = _weighted_rank_auc_numba(
+                y_sorted.astype(np.int64, copy=False),
+                s_sorted_fold.astype(np.float64, copy=False),
+                weights,
+            )
+            if not np.isnan(auc_b):
+                fold_aucs_replicate.append(auc_b)
         if not fold_aucs_replicate:
             return 0.5
         return float(np.mean(fold_aucs_replicate))
 
-    total_rows = sum(len(r["y_test"]) for r in fold_results)
     _resolved_jobs = bootstrap_n_jobs if bootstrap_n_jobs != -1 else n_jobs
-    _effective_jobs = 1 if (_resolved_jobs == 1 or total_rows < 50_000) else _resolved_jobs
-    results = Parallel(n_jobs=_effective_jobs, backend="loky")(
+    _effective_jobs = 1 if _resolved_jobs == 1 else _resolved_jobs
+    results = Parallel(n_jobs=_effective_jobs, prefer="threads")(
         delayed(_one_replicate)(int(s)) for s in child_seeds
     )
     replicate_stats = np.array(results, dtype=np.float64)
 
     return (
-        float(np.quantile(replicate_stats, 0.025)),
-        float(np.quantile(replicate_stats, 0.975)),
+        float(np.nanquantile(replicate_stats, 0.025)),
+        float(np.nanquantile(replicate_stats, 0.975)),
     )
 
 
@@ -944,8 +1163,11 @@ def _residualize_single_confound(
     s: np.ndarray,
     c: np.ndarray,
     seed: int = 42,
-) -> float:
-    """Residualize s against a single confound c via isotonic regression."""
+) -> tuple[float, float]:
+    """Residualize s against a single confound c via isotonic regression.
+
+    Returns (auc, iso_seconds) where iso_seconds is cumulative IsotonicRegression.fit() time.
+    """
     rng = np.random.default_rng(seed)
     n = len(y)
     half_a_idx = rng.choice(n, size=n // 2, replace=False)
@@ -953,11 +1175,16 @@ def _residualize_single_confound(
 
     from scipy.stats import rankdata
 
+    _iso_seconds = 0.0
+
     def _do(fit_idx: np.ndarray, apply_idx: np.ndarray) -> float:
+        nonlocal _iso_seconds
         r_fit = rankdata(c[fit_idx], method="average") / len(fit_idx)
         r_apply = rankdata(c[apply_idx], method="average") / len(apply_idx)
         iso = IsotonicRegression(out_of_bounds="clip")
+        _t_iso = time.perf_counter()
         iso.fit(r_fit, s[fit_idx])
+        _iso_seconds += time.perf_counter() - _t_iso
         resid = s[apply_idx] - iso.predict(r_apply)
         if len(np.unique(y[apply_idx])) < 2:
             return 0.5
@@ -965,7 +1192,8 @@ def _residualize_single_confound(
 
     auc_b = _do(half_a_idx, half_b_idx)
     auc_a = _do(half_b_idx, half_a_idx)
-    return (auc_a * len(half_a_idx) + auc_b * len(half_b_idx)) / (len(half_a_idx) + len(half_b_idx))
+    auc = (auc_a * len(half_a_idx) + auc_b * len(half_b_idx)) / (len(half_a_idx) + len(half_b_idx))
+    return auc, _iso_seconds
 
 
 # ---------------------------------------------------------------------------
@@ -1106,12 +1334,22 @@ def _compute_user_main_effect_lgbm(
     outcome_variable: str,
     seed: int,
     inner_threads: int,
+    fold_k: int = 0,
+    cache: HarnessCache | None = None,
 ) -> np.ndarray:
     """Train a lightweight LightGBM on train_df and return test_df probabilities.
 
-    Uses n_estimators=100 (lighter than the main model — this is a baseline).
-    Train/test separation guarantees no future leak by construction.
+    Uses n_estimators=100 (T2.3 reverted: 50-estimator predictions caused a primary-metric
+    drift of -0.029 on the 5% probe, well beyond the Codex drift gate). Cache bypass on
+    warm runs via T1.1. Train/test separation guarantees no future leak by construction.
     """
+    fingerprint: str | None = None
+    if cache is not None:
+        fingerprint = fold_train_fingerprint(train_df, fold_k=fold_k, user_features=feature_cols)
+        cached = cache.get_user_main_effect_predictions(fingerprint=fingerprint, fold_k=fold_k)
+        if cached is not None:
+            return cached["predictions"].to_numpy().astype(np.float64)
+
     args = dict(ml_model_config.args)
     args["n_estimators"] = 100
     args["random_state"] = seed
@@ -1124,7 +1362,16 @@ def _compute_user_main_effect_lgbm(
 
     model = LGBMClassifier(**args)
     model.fit(X_train, y_train)
-    return model.predict_proba(X_test)[:, 1]
+    preds = model.predict_proba(X_test)[:, 1]
+
+    if cache is not None and fingerprint is not None:
+        cache.put_user_main_effect_predictions(
+            fingerprint=fingerprint,
+            fold_k=fold_k,
+            df=pl.DataFrame({"predictions": preds}),
+        )
+
+    return preds
 
 
 # ---------------------------------------------------------------------------
@@ -1143,6 +1390,10 @@ def _run_one_fold(
     confound_overlap_threshold: int,
     seed: int,
     bootstrap_n_jobs: int,
+    fold_k: int = 0,
+    bootstrap_n_resamples: int = 500,
+    cache: HarnessCache | None = None,
+    scope: str = "comparison",
 ) -> dict[str, Any]:
     """Execute one quarterly fold: fit → predict → residualize → score → bootstrap CI."""
     lgbm_args = dict(ml_model_config.args)
@@ -1172,29 +1423,42 @@ def _run_one_fold(
         outcome_variable,
         seed=seed,
         inner_threads=inner_threads,
+        fold_k=fold_k,
+        cache=cache,
     )
 
-    auc_residualized, auc_dir_a, auc_dir_b, s_resid_xfit = _compute_residualized_auc_cross_fit(
+    _t_resid = time.perf_counter()
+    # T4.3: single-fit adds test-noise-leak risk; OK for directional fast-iter verdicts.
+    _resid_fn = (
+        _compute_residualized_auc_single_fit
+        if _is_fast_iter(scope)
+        else _compute_residualized_auc_cross_fit
+    )
+    auc_residualized, auc_dir_a, auc_dir_b, s_resid_xfit, _iso_secs_primary = _resid_fn(
         y_test, s_test, c_u_main_effect_test, c_e_test, seed=seed
     )
 
-    auc_residualized_old, _, _, s_resid_old = _compute_residualized_auc_cross_fit(
+    auc_residualized_old, _, _, s_resid_old, _iso_secs_old = _resid_fn(
         y_test, s_test, c_u_test, c_e_test, seed=seed
     )
+    _resid_seconds = time.perf_counter() - _t_resid
+    _iso_fold_seconds = _iso_secs_primary + _iso_secs_old
 
     user_ids_test = test_df["user_id"].to_numpy()
 
+    _t_boot = time.perf_counter()
     boot_aucs = _user_block_bootstrap(
         y_test,
         s_resid_xfit,
         user_ids_test,
-        n_boot=500,
+        n_boot=bootstrap_n_resamples,
         seed=seed,
         n_jobs=-1,
         bootstrap_n_jobs=bootstrap_n_jobs,
     )
-    ci_low = float(np.quantile(boot_aucs, 0.025))
-    ci_high = float(np.quantile(boot_aucs, 0.975))
+    _boot_seconds = time.perf_counter() - _t_boot
+    ci_low = float(np.nanquantile(boot_aucs, 0.025))
+    ci_high = float(np.nanquantile(boot_aucs, 0.975))
 
     fold_overlap_diag = _compute_confound_overlap_diagnostic(
         fold_label=q_label,
@@ -1242,6 +1506,9 @@ def _run_one_fold(
         "n_test": len(test_df),
         "fold_overlap_diag": fold_overlap_diag,
         "pred_rows": pred_rows,
+        "_resid_seconds": _resid_seconds,
+        "_iso_fold_seconds": _iso_fold_seconds,
+        "_boot_seconds": _boot_seconds,
     }
 
 
@@ -1262,6 +1529,9 @@ def harness(
     fold_n_jobs: int = 8,
     inner_threads: int | None = None,
     disable_cache: bool = False,
+    bootstrap_n_resamples: int | None = None,
+    scope: str = "comparison",
+    report_supplementary: bool | None = None,
 ) -> CivicShoutHarnessResponse:
     """Evaluate features against actioned_24h via quarterly walk-forward.
 
@@ -1270,6 +1540,15 @@ def harness(
     computed on FULL data (Laplace-smoothed). Old RFM metric kept as secondary.
     """
     wall_start = time.perf_counter()
+    # T4.4: default resamples adapts to scope; callers can always override explicitly.
+    if bootstrap_n_resamples is None:
+        bootstrap_n_resamples = 100 if _is_fast_iter(scope) else 500
+    # T3.2: supplementary single-confound residualizations are expensive (16 isotonic fits).
+    # fast_iter always skips (T4.5); champion_candidate always runs; comparison defaults off.
+    if _is_fast_iter(scope):
+        report_supplementary = False
+    elif report_supplementary is None:
+        report_supplementary = scope == "champion_candidate"
     stage_timings: list[HarnessStageTiming] = []
     diagnostics: list[HarnessDiagnostic] = []
     artifacts: list[HarnessArtifact] = []
@@ -1428,6 +1707,12 @@ def harness(
     if len(folds) == 0:
         raise ValueError("No valid quarterly walk-forward folds found. Check date range in data.")
 
+    if _is_fast_iter(scope) and len(folds) > 3:
+        # T4.2: subsample to 3 folds (first/middle/last) to preserve temporal structure
+        # while cutting ~60-70% of per-fold loop wall. Uses all folds when fewer than 3.
+        mid = len(folds) // 2
+        folds = [folds[0], folds[mid], folds[-1]]
+
     thin_train_threshold = 50_000
     for q_label, train_df, _ in folds:
         if len(train_df) < thin_train_threshold:
@@ -1494,7 +1779,9 @@ def harness(
     t_fold_wall_start = time.perf_counter()
 
     _effective_fold_jobs = fold_n_jobs if fold_n_jobs != 1 else 1
-    raw_fold_results: list[dict[str, Any]] = Parallel(n_jobs=_effective_fold_jobs, backend="loky")(
+    raw_fold_results: list[dict[str, Any]] = Parallel(
+        n_jobs=_effective_fold_jobs, prefer="threads"
+    )(
         delayed(_run_one_fold)(
             train_df,
             test_df,
@@ -1506,6 +1793,10 @@ def harness(
             _confound_overlap_threshold,
             int(fold_seeds[k]),
             bootstrap_n_jobs,
+            fold_k=k,
+            bootstrap_n_resamples=bootstrap_n_resamples,
+            cache=_harness_cache if not disable_cache else None,
+            scope=scope,
         )
         for k, (q_label, train_df, test_df) in enumerate(fold_pairs)
     )  # type: ignore[assignment]
@@ -1530,6 +1821,34 @@ def harness(
         HarnessStageTiming(stage="score", seconds=0.0, owner="harness", calls=n_folds)
     )
 
+    _fold_resid_seconds = sum(r["_resid_seconds"] for r in fold_results)
+    _fold_iso_seconds = sum(r["_iso_fold_seconds"] for r in fold_results)
+    _fold_boot_seconds = sum(r["_boot_seconds"] for r in fold_results)
+    stage_timings.append(
+        HarnessStageTiming(
+            stage="residualize_scores",
+            seconds=_fold_resid_seconds,
+            owner="harness",
+            calls=n_folds,
+        )
+    )
+    stage_timings.append(
+        HarnessStageTiming(
+            stage="cross_fit_isotonic",
+            seconds=_fold_iso_seconds,
+            owner="harness",
+            calls=n_folds,
+        )
+    )
+    stage_timings.append(
+        HarnessStageTiming(
+            stage="bootstrap_ci",
+            seconds=_fold_boot_seconds,
+            owner="harness",
+            calls=n_folds,
+        )
+    )
+
     if leak_diag_user:
         diagnostics.append(leak_diag_user)
     if leak_diag_email:
@@ -1550,7 +1869,11 @@ def harness(
     k = len(fold_aucs)
     if k > 1:
         primary_ci_low, primary_ci_high = _pooled_user_block_bootstrap_mean_of_folds(
-            fold_results, n_boot=500, seed=42, n_jobs=-1, bootstrap_n_jobs=bootstrap_n_jobs
+            fold_results,
+            n_boot=bootstrap_n_resamples,
+            seed=42,
+            n_jobs=-1,
+            bootstrap_n_jobs=bootstrap_n_jobs,
         )
     else:
         primary_ci_low = fold_results[0]["ci_low"]
@@ -1560,7 +1883,6 @@ def harness(
     y_all = np.concatenate([r["y_test"] for r in fold_results])
     s_all = np.concatenate([r["s_test"] for r in fold_results])
     s_resid_all = np.concatenate([r["s_resid"] for r in fold_results])
-    s_resid_old_all = np.concatenate([r["s_resid_old"] for r in fold_results])
     c_u_all = np.concatenate([r["c_u_test"] for r in fold_results])
     c_u_main_effect_all = np.concatenate([r["c_u_main_effect_test"] for r in fold_results])
     c_e_all = np.concatenate([r["c_e_test"] for r in fold_results])
@@ -1580,13 +1902,33 @@ def harness(
     )
 
     # Secondary: single-confound residualized AUCs (old RFM user confound)
-    roc_auc_user_prior_only = _residualize_single_confound(y_all, s_all, c_u_all, seed=42)
-    roc_auc_email_pop_only = _residualize_single_confound(y_all, s_all, c_e_all, seed=42)
+    # T3.2 / T4.5: skip supplementary residualizations unless report_supplementary is True.
+    # fast_iter forces False; champion_candidate defaults True; comparison defaults False.
+    _t_supp_resid = time.perf_counter()
+    if report_supplementary:
+        roc_auc_user_prior_only, _iso_supp_1 = _residualize_single_confound(
+            y_all, s_all, c_u_all, seed=42
+        )
+        roc_auc_email_pop_only, _iso_supp_2 = _residualize_single_confound(
+            y_all, s_all, c_e_all, seed=42
+        )
+        roc_auc_user_main_effect_only, _iso_supp_3 = _residualize_single_confound(
+            y_all, s_all, c_u_main_effect_all, seed=42
+        )
+        _supp_iso_seconds = _iso_supp_1 + _iso_supp_2 + _iso_supp_3
+    else:
+        roc_auc_user_prior_only = None
+        roc_auc_email_pop_only = None
+        roc_auc_user_main_effect_only = None
+        _supp_iso_seconds = 0.0
+    _supp_resid_seconds = time.perf_counter() - _t_supp_resid
 
-    # Secondary: single-confound residualized AUC for new user main effect
-    roc_auc_user_main_effect_only = _residualize_single_confound(
-        y_all, s_all, c_u_main_effect_all, seed=42
-    )
+    # Accumulate supplementary residualization into the fold-level substage timings.
+    for st in stage_timings:
+        if st.stage == "residualize_scores":
+            st.seconds += _supp_resid_seconds
+        elif st.stage == "cross_fit_isotonic":
+            st.seconds += _supp_iso_seconds
 
     # PR-AUC variant (uses new primary residualized scores)
     pr_auc_residualized = (
@@ -1601,7 +1943,7 @@ def harness(
     # Non-streak users (Gemini — streak-bridge guard)
     all_test_dfs = pl.concat([r["test_df"] for r in fold_results])
     if "is_in_action_streak" in all_test_dfs.columns:
-        non_streak_mask = (all_test_dfs["is_in_action_streak"].fill_null(False) == False).to_numpy()
+        non_streak_mask = (~all_test_dfs["is_in_action_streak"].fill_null(False)).to_numpy()
         if non_streak_mask.sum() >= 50 and len(np.unique(y_all[non_streak_mask])) >= 2:
             roc_auc_non_streak = float(
                 roc_auc_score(y_all[non_streak_mask], s_resid_all[non_streak_mask])
@@ -1624,7 +1966,6 @@ def harness(
         roc_auc_cold_start = None
 
     # Calendar-month CV (Gemini, Concern 1)
-    all_test_dates = all_test_dfs["date_sent"]
     month_labels = (
         all_test_dfs.with_columns(
             (
@@ -1851,9 +2192,17 @@ def harness(
                 name="predictions",
                 kind="predictions",
                 uri=str(pred_path),
+                byte_size=byte_size,
                 description="Per-row predictions with score, residualized score, label, row_loss, and fold.",
             )
         )
+    stage_timings.append(
+        HarnessStageTiming(
+            stage="persist_predictions",
+            seconds=time.perf_counter() - t_persist,
+            owner="harness",
+        )
+    )
 
     # ------------------------------------------------------------------
     # Build secondary metrics
@@ -1866,28 +2215,13 @@ def harness(
             direction="higher_is_better",
         ),
         HarnessMetric(
-            name="roc_auc_residualized_user_prior_pair",
-            value=roc_auc_user_prior_only,
-            direction="higher_is_better",
-        ),
-        HarnessMetric(
             name="roc_auc_residualized_user_prior_x_email_popularity_pair",
             value=old_primary_value,
             direction="higher_is_better",
         ),
         HarnessMetric(
-            name="roc_auc_residualized_user_main_effect_pair",
-            value=roc_auc_user_main_effect_only,
-            direction="higher_is_better",
-        ),
-        HarnessMetric(
             name="roc_auc_residualized_user_main_effect_x_email_popularity_pair",
             value=primary_value,
-            direction="higher_is_better",
-        ),
-        HarnessMetric(
-            name="roc_auc_residualized_email_popularity_pair",
-            value=roc_auc_email_pop_only,
             direction="higher_is_better",
         ),
         HarnessMetric(
@@ -1912,6 +2246,32 @@ def harness(
             name="pooled_positive_rate_test", value=positive_rate_test, direction="higher_is_better"
         ),
     ]
+
+    # T4.5: supplementary single-confound metrics are None in fast_iter; emit only when computed.
+    if roc_auc_user_prior_only is not None:
+        secondary_metrics.append(
+            HarnessMetric(
+                name="roc_auc_residualized_user_prior_pair",
+                value=roc_auc_user_prior_only,
+                direction="higher_is_better",
+            )
+        )
+    if roc_auc_user_main_effect_only is not None:
+        secondary_metrics.append(
+            HarnessMetric(
+                name="roc_auc_residualized_user_main_effect_pair",
+                value=roc_auc_user_main_effect_only,
+                direction="higher_is_better",
+            )
+        )
+    if roc_auc_email_pop_only is not None:
+        secondary_metrics.append(
+            HarnessMetric(
+                name="roc_auc_residualized_email_popularity_pair",
+                value=roc_auc_email_pop_only,
+                direction="higher_is_better",
+            )
+        )
 
     if roc_auc_non_streak is not None:
         secondary_metrics.append(
@@ -2051,7 +2411,7 @@ def harness(
             parallelism=HarnessParallelism(
                 outer_n_jobs=_effective_fold_jobs,
                 inner_threads=_inner_threads,
-                backend="loky" if _effective_fold_jobs != 1 else "sequential",
+                backend="threading" if _effective_fold_jobs != 1 else "sequential",
                 cpu_count_observed=cpu_count,
                 cpu_utilization_pct=cpu_util,
             ),

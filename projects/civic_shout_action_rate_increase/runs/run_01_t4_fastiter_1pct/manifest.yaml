@@ -1,9 +1,9 @@
-run_id: run_01_smoke_gpu
+run_id: run_01_t4_fastiter_1pct
 project: civic_shout_action_rate_increase
 comparison_group: action_rate_increase_temporal_holdout_residualized_auc_v1
-scope: smoke
-git_sha: 3d67908
-recorded_at_utc: '2026-05-14T18:31:36.301752+00:00'
+scope: fast_iter
+git_sha: 42f8222
+recorded_at_utc: '2026-05-14T20:36:53.144746+00:00'
 outcome:
   version: v1
   name: actioned_24h_per_send
@@ -11,7 +11,7 @@ features: {}
 data:
   source_cache: civic_shout_user_emails
   source_version: 3
-  n_rows: 129019
+  n_rows: 1290194
   fingerprint: 'null'
 model:
   type: lightgbm_classifier
@@ -29,8 +29,8 @@ model:
     n_jobs: -1
     random_state: 42
 sample:
-  frac: 0.001
+  frac: 0.01
   seed: 42
 performance:
-  elapsed_seconds: 139.2309722499922
-  bottleneck_stage: aggregate
+  elapsed_seconds: 100.47423166700173
+  bottleneck_stage: data_conversion
