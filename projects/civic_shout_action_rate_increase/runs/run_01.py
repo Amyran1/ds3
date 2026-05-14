@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import argparse
 import cProfile
+import os
 import pstats
 import subprocess
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
+
+os.environ.setdefault("OMP_WAIT_POLICY", "ACTIVE")
 
 import polars as pl
 
@@ -59,6 +62,8 @@ _LGBM_ARGS = {
     "verbose": -1,
     "n_jobs": -1,
     "random_state": 42,
+    "force_col_wise": True,
+    "feature_pre_filter": True,
 }
 
 

@@ -7,9 +7,12 @@ full 5% comparison run. EDA is enabled on smoke runs.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
+os.environ.setdefault("OMP_WAIT_POLICY", "ACTIVE")
 
 import polars as pl
 
