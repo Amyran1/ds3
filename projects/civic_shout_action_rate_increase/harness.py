@@ -862,6 +862,28 @@ def _rank_auc_numpy(y: np.ndarray, scores: np.ndarray) -> float:
 
 
 # ---------------------------------------------------------------------------
+# cvAUC point estimate (T3b — comparison_fast fast-path cross-check)
+# ---------------------------------------------------------------------------
+
+
+def _cv_auc_point_estimate(fold_results: list[dict]) -> float:
+    """Compute the cross-validated AUC point estimate via Mann-Whitney U
+    averaged across folds. Fast cross-check against the bootstrap mean —
+    NOT a CI replacement. Returns a single float.
+    """
+    fold_aucs = []
+    for fold in fold_results:
+        y = fold["y_test"]
+        s = fold["s_resid"]
+        if y.sum() == 0 or y.sum() == len(y):
+            continue
+        fold_aucs.append(_rank_auc_numpy(y, s))
+    if not fold_aucs:
+        return float("nan")
+    return float(np.mean(fold_aucs))
+
+
+# ---------------------------------------------------------------------------
 # Weighted-rank AUC (T2.1 — pre-sorted input, integer multiplicity weights)
 # ---------------------------------------------------------------------------
 
@@ -2270,6 +2292,14 @@ def harness(
             )
         )
 
+    # T3b: cvAUC point estimate — comparison_fast only.
+    # primary_value == mean(fold_aucs) by construction; cv_auc_pe should match to 1e-9.
+    _perf_metadata: dict[str, Any] = {}
+    if scope == "comparison_fast":
+        cv_auc_pe = _cv_auc_point_estimate(fold_results)
+        _perf_metadata["cv_auc_point_estimate"] = cv_auc_pe
+        _perf_metadata["cv_auc_pe_vs_bootstrap_mean"] = float(primary_value - cv_auc_pe)
+
     stage_timings.append(
         HarnessStageTiming(stage="aggregate", seconds=time.perf_counter() - t0, owner="harness")
     )
@@ -2529,6 +2559,7 @@ def harness(
             ),
             hardware="local cpu",
             sample_size=n_rows_evaluated,
+            metadata=_perf_metadata,
         ),
         diagnostics=diagnostics,
         artifacts=artifacts,
