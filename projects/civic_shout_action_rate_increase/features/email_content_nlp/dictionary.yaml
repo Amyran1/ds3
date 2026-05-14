@@ -1,0 +1,23 @@
+feature_family: email_content_nlp
+version: v1
+row_keys: [email_id]
+date_column: null  # per-email (time-invariant) features; broadcast in join
+feature_cols:
+  - body_char_len
+  - body_word_count
+  - body_sentence_count
+  - body_avg_word_len_chars
+  - body_exclamation_count
+  - body_question_count
+  - body_uppercase_word_ratio
+  - body_urgency_keyword_count
+  - body_cta_keyword_count
+  - first_line_char_len
+  - first_line_word_count
+provenance: planner brainstorm bs-iter2-01-47822d06 (iter 2). Champion has zero email-side features; roc_auc_residualized_email_popularity_pair = 0.811 reveals strong email-level variance no user-history feature captures.
+target_alignment: built independent of outcome; joined to user_emails v3 (actioned_24h)
+null_policy: harness fill_null(0); emails missing body_plaintext receive empty-content profile (all zero except feature defaults).
+leakage_audit: body_plaintext is immutable send-time content; per-email features are time-invariant deterministic functions of body text. No shift/window operations. No outcome leakage by construction.
+build_script: features/email_content_nlp/create_cache_v1.py
+data_dependency:
+  - entities/civic_shout_emails v1 (body_plaintext)
