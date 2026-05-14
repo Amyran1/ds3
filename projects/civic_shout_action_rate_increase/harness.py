@@ -1014,9 +1014,7 @@ def _user_block_bootstrap(
 
     def _one_replicate(rep_seed: int) -> float:
         rep_rng = np.random.default_rng(rep_seed)
-        sampled_users = rep_rng.choice(unique_users, size=n_users, replace=True)
-        sampled_user_idx = np.searchsorted(unique_users, sampled_users).astype(np.int32, copy=False)
-        user_multiplicity = np.bincount(sampled_user_idx, minlength=n_users).astype(
+        user_multiplicity = rep_rng.multinomial(n_users, np.full(n_users, 1.0 / n_users)).astype(
             np.int32, copy=False
         )
         weights = user_multiplicity[row_to_user_idx].astype(np.int64, copy=False)
@@ -1083,15 +1081,9 @@ def _pooled_user_block_bootstrap_mean_of_folds(
 
     def _one_replicate(rep_seed: int) -> float:
         rep_rng = np.random.default_rng(rep_seed)
-        # Same RNG draw as before (values, not indices) for bit-for-bit parity with old code.
-        sampled_users = rep_rng.choice(unique_users_global, size=n_users_global, replace=True)
-        # One searchsorted per replicate (global, not per-fold).
-        sampled_idx_global = np.searchsorted(unique_users_global, sampled_users).astype(
-            np.int32, copy=False
-        )
-        counts_global = np.bincount(sampled_idx_global, minlength=n_users_global).astype(
-            np.int32, copy=False
-        )
+        counts_global = rep_rng.multinomial(
+            n_users_global, np.full(n_users_global, 1.0 / n_users_global)
+        ).astype(np.int32, copy=False)
         fold_aucs_replicate: list[float] = []
         for (
             y_sorted,

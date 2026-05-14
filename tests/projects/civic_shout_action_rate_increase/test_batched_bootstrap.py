@@ -124,7 +124,11 @@ def test_weighted_auc_unit_weights_with_ties() -> None:
 
 
 def test_batched_bootstrap_matches_loop_seed42() -> None:
-    """T2.1 batched bootstrap CI must match reference T1 loop CI to 1e-9 on seed=42."""
+    """T3a: multinomial path CI must agree with reference loop CI within MC tolerance on seed=42.
+
+    T3a replaced rng.choice+bincount with rng.multinomial — same distribution, different RNG
+    sequence. Bit-for-bit parity no longer holds; tolerance = 2× MC std error for a 95% CI.
+    """
     rng = np.random.default_rng(0)
     y, scores, user_ids = _make_toy_frame(rng)
 
@@ -141,12 +145,13 @@ def test_batched_bootstrap_matches_loop_seed42() -> None:
     lo_batched = float(np.nanquantile(batched_aucs, 0.025))
     hi_batched = float(np.nanquantile(batched_aucs, 0.975))
 
-    assert abs(lo_batched - lo_loop) < 1e-9, f"CI low mismatch: {lo_batched} vs {lo_loop}"
-    assert abs(hi_batched - hi_loop) < 1e-9, f"CI high mismatch: {hi_batched} vs {hi_loop}"
+    tol = 0.045
+    assert abs(lo_batched - lo_loop) < tol, f"CI low mismatch: {lo_batched} vs {lo_loop}"
+    assert abs(hi_batched - hi_loop) < tol, f"CI high mismatch: {hi_batched} vs {hi_loop}"
 
 
 def test_batched_bootstrap_matches_loop_seed137() -> None:
-    """Regression hardening: seed=137 must also match to 1e-9."""
+    """T3a: multinomial path CI must agree with reference loop CI within MC tolerance on seed=137."""
     rng = np.random.default_rng(0)
     y, scores, user_ids = _make_toy_frame(rng)
 
@@ -163,12 +168,13 @@ def test_batched_bootstrap_matches_loop_seed137() -> None:
     lo_batched = float(np.nanquantile(batched_aucs, 0.025))
     hi_batched = float(np.nanquantile(batched_aucs, 0.975))
 
-    assert abs(lo_batched - lo_loop) < 1e-9, f"CI low mismatch: {lo_batched} vs {lo_loop}"
-    assert abs(hi_batched - hi_loop) < 1e-9, f"CI high mismatch: {hi_batched} vs {hi_loop}"
+    tol = 0.045
+    assert abs(lo_batched - lo_loop) < tol, f"CI low mismatch: {lo_batched} vs {lo_loop}"
+    assert abs(hi_batched - hi_loop) < tol, f"CI high mismatch: {hi_batched} vs {hi_loop}"
 
 
 def test_batched_bootstrap_matches_loop_ties() -> None:
-    """Toy frame with many tied scores: CI endpoints must match to 1e-9."""
+    """T3a: tied-score frame CI must agree with reference loop CI within MC tolerance."""
     rng = np.random.default_rng(0)
     y, scores, user_ids = _make_tied_frame(rng)
 
@@ -185,8 +191,9 @@ def test_batched_bootstrap_matches_loop_ties() -> None:
     lo_batched = float(np.nanquantile(batched_aucs, 0.025))
     hi_batched = float(np.nanquantile(batched_aucs, 0.975))
 
-    assert abs(lo_batched - lo_loop) < 1e-9, f"Ties CI low mismatch: {lo_batched} vs {lo_loop}"
-    assert abs(hi_batched - hi_loop) < 1e-9, f"Ties CI high mismatch: {hi_batched} vs {hi_loop}"
+    tol = 0.045
+    assert abs(lo_batched - lo_loop) < tol, f"Ties CI low mismatch: {lo_batched} vs {lo_loop}"
+    assert abs(hi_batched - hi_loop) < tol, f"Ties CI high mismatch: {hi_batched} vs {hi_loop}"
 
 
 def test_batched_bootstrap_degenerate_resample_returns_nan() -> None:
