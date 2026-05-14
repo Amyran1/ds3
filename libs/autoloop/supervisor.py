@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import json
 import logging
 import re
 import subprocess
@@ -26,6 +27,7 @@ from libs.autoloop.failure_modes import (
     format_for_prompt,
     recent_failures,
 )
+from libs.autoloop.perf_bounty import PerfBountyResult, run_perf_bounty
 from libs.autoloop.progress import Heartbeat, event, fmt_dur
 from libs.autoloop.state import (
     AutoloopConfig,
@@ -377,6 +379,23 @@ async def _outer_loop(
         iter_rec.budget_after = snap
         iter_rec.termination_checks = verdict.checks
         iter_rec.iteration_fingerprint = _compute_iteration_fingerprint(top, iter_rec.executor)
+
+        perf_bounty_result: PerfBountyResult | None = None
+        if (
+            cfg.budget.perf_bounty_enabled  # v1 feature flag
+            and iter_rec.executor is not None
+            and iter_rec.executor.run_record_status == "completed"
+            and iter_rec.executor.run_id is not None
+        ):
+            perf_bounty_result = await _run_perf_bounty_with_timing(
+                project=args.project,
+                iteration_id=iter_id,
+                run_id=iter_rec.executor.run_id,
+                project_root=args.project_root,
+                max_dollars=cfg.budget.perf_bounty_max_dollars,
+            )
+        iter_rec.perf_bounty = perf_bounty_result
+
         iter_rec.ts_end = datetime.now(tz=timezone.utc).isoformat()
 
         state.append_iteration(iter_rec)
@@ -944,3 +963,65 @@ def _finalize_iter_rec(iter_rec: IterationRecord, budget: AutoloopBudget) -> Ite
             last_top3_run_ids=[], last_top3_metrics=[], iters_since_top3_change=0
         )
     return iter_rec
+
+
+async def _run_perf_bounty_with_timing(
+    *,
+    project: str,
+    iteration_id: int,
+    run_id: str,
+    project_root: Path,
+    max_dollars: float = 1.00,
+) -> PerfBountyResult | None:
+    """Wrap run_perf_bounty so a failure here does not kill the autoloop iteration."""
+    try:
+        # repo_root is the dev/ds3 root; project files live under projects/{project}/
+        repo_root = project_root
+        project_dir = repo_root / "projects" / project
+
+        frozen_response_path = project_dir / "runs" / run_id / "harness_response.json"
+        frozen_predictions_path = (
+            project_dir / "runs" / run_id / "artifacts" / "predictions.parquet"
+        )
+
+        if not frozen_response_path.exists() or not frozen_predictions_path.exists():
+            return None
+
+        timing_row = _latest_timing_row(project_dir, run_id)
+        if timing_row is None:
+            return None
+
+        return await run_perf_bounty(
+            project=project,
+            iteration_id=iteration_id,
+            run_id=run_id,
+            frozen_response_path=frozen_response_path,
+            frozen_predictions_path=frozen_predictions_path,
+            timing_row=timing_row,
+            project_root=project_dir,
+            repo_root=repo_root,
+            dry_run=False,
+            max_dollars=max_dollars,
+        )
+    except Exception:  # noqa: BLE001 — explicitly swallow so the autoloop continues
+        logger.exception("perf_bounty failed (non-fatal)")
+        return None
+
+
+def _latest_timing_row(project_root: Path, run_id: str) -> dict | None:
+    timing_path = project_root / "timing_performance.jsonl"
+    if not timing_path.exists():
+        return None
+    last_match: dict | None = None
+    with timing_path.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("run_id") == run_id:
+                last_match = row
+    return last_match

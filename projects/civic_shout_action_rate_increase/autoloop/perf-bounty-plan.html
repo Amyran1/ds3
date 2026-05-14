@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Perf Bounty Agent — autoloop speedup proposal</title>
+<style>
+  :root {
+    --ink: #0e1116;
+    --paper: #fbfaf6;
+    --rule: #2b2f36;
+    --muted: #5b6470;
+    --accent: #c2410c;
+    --accent-soft: #fde6d3;
+    --win: #1f6f3a;
+    --warn: #8a6d1b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 24px 64px;
+    background: var(--paper);
+    color: var(--ink);
+    font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 {
+    font-size: 30px; line-height: 1.15; margin: 0 0 6px;
+    letter-spacing: -0.01em; font-weight: 700;
+  }
+  h1 .ink { color: var(--accent); }
+  .lede {
+    font-size: 15px; color: var(--muted); margin: 0 0 28px;
+    max-width: 78ch;
+  }
+  h2 {
+    font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted); margin: 36px 0 12px; font-weight: 600;
+    border-top: 1px solid var(--rule); padding-top: 14px;
+  }
+  h2 .num {
+    display: inline-block; width: 22px; height: 22px; line-height: 22px;
+    border: 1px solid var(--rule); border-radius: 50%;
+    text-align: center; font-size: 11px; margin-right: 8px;
+    color: var(--ink); background: var(--paper);
+  }
+  .grid { display: grid; gap: 14px; }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+
+  .card {
+    border: 1px solid var(--rule);
+    background: #fff;
+    padding: 14px 16px;
+    border-radius: 4px;
+  }
+  .card h3 {
+    margin: 0 0 6px; font-size: 13px; font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .card p { margin: 0; color: var(--muted); font-size: 13px; }
+
+  /* swimlane */
+  .lane {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    border: 1px solid var(--rule);
+    background: #fff;
+    margin-bottom: -1px;
+  }
+  .lane .label {
+    border-right: 1px solid var(--rule);
+    background: #f4f1ea;
+    padding: 12px 14px;
+    font-weight: 600; font-size: 12px;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--ink);
+  }
+  .lane .label small {
+    display: block; font-weight: 400; font-size: 11px;
+    color: var(--muted); margin-top: 4px; text-transform: none; letter-spacing: 0;
+  }
+  .lane .track {
+    padding: 12px 14px;
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  }
+  .step {
+    border: 1px solid var(--rule);
+    padding: 6px 10px; font-size: 12px;
+    background: var(--paper);
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .step.accent { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .step.win { background: #e3f1e9; border-color: var(--win); color: var(--win); font-weight: 600; }
+  .arr { color: var(--muted); font-weight: 700; }
+
+  /* decision tree */
+  .tree { font-family: ui-monospace, SF Mono, Menlo, monospace; font-size: 12.5px; line-height: 1.7; white-space: pre; background: #fff; padding: 16px; border: 1px solid var(--rule); border-radius: 4px; }
+  .tree .hit { color: var(--win); font-weight: 700; }
+  .tree .skip { color: var(--muted); }
+  .tree .branch { color: var(--accent); font-weight: 600; }
+
+  /* contract */
+  .contract { display: grid; grid-template-columns: 1fr 70px 1fr; gap: 0; align-items: stretch; }
+  .contract .col { border: 1px solid var(--rule); padding: 14px; background: #fff; }
+  .contract .mid { display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--muted); border: none; background: transparent; }
+  .contract .col h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 600; }
+  .contract ul { margin: 0; padding-left: 18px; }
+  .contract li { margin: 4px 0; }
+  .contract code { font-family: ui-monospace, SF Mono, Menlo, monospace; font-size: 12px; background: #f4f1ea; padding: 1px 4px; border-radius: 2px; }
+
+  /* bottleneck bar */
+  .bars { display: grid; gap: 6px; margin-top: 8px; }
+  .bar {
+    display: grid; grid-template-columns: 130px 1fr 80px;
+    align-items: center; gap: 8px; font-size: 12px;
+  }
+  .bar .name { font-family: ui-monospace, SF Mono, Menlo, monospace; }
+  .bar .track {
+    height: 16px; background: #f0ece2; border: 1px solid #d8d2c2;
+    position: relative; overflow: hidden;
+  }
+  .bar .fill { height: 100%; background: var(--accent); }
+  .bar .fill.cold { background: #c5cdd6; }
+  .bar .pct { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* ledger */
+  table.ledger { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.ledger th, table.ledger td {
+    border-bottom: 1px solid #d8d2c2;
+    padding: 8px 10px; text-align: left; vertical-align: top;
+  }
+  table.ledger th {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted); font-weight: 600;
+    border-bottom: 1px solid var(--rule);
+  }
+  table.ledger td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  table.ledger td.win { color: var(--win); font-weight: 600; }
+  table.ledger td.fail { color: var(--muted); }
+
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 10px 14px; margin: 12px 0;
+    font-size: 13px;
+  }
+  .callout strong { color: var(--accent); }
+
+  .risks { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .risk {
+    border: 1px solid var(--rule);
+    background: #fff;
+    padding: 12px 14px;
+  }
+  .risk h4 { margin: 0 0 4px; font-size: 13px; color: var(--warn); }
+  .risk p { margin: 0; font-size: 12.5px; color: var(--muted); }
+
+  code.kbd {
+    font-family: ui-monospace, SF Mono, Menlo, monospace;
+    font-size: 12px; background: #f4f1ea;
+    border: 1px solid #d8d2c2; padding: 1px 5px; border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>The Perf <span class="ink">Bounty</span> Agent</h1>
+  <p class="lede">
+    A sidecar agent that fires after every harness run, treats the deterministic output of run X as a frozen oracle,
+    and tries to win the biggest speedup it can without changing the answer. Same idea, narrower gate, for feature builds.
+  </p>
+
+  <!-- 1. THE OPPORTUNITY -->
+  <h2><span class="num">1</span> The opportunity, from your own timing ledger</h2>
+  <div class="card">
+    <h3>civic_shout / run_01 (comparison, 5% sample) — 1856s wall time, 8 features × 8 folds</h3>
+    <p>Two stages eat 94% of the wall time. Everything else is rounding error. The Perf Bounty Agent does not have to be clever — it has to be aimed.</p>
+    <div class="bars">
+      <div class="bar"><span class="name">aggregate</span><div class="track"><div class="fill" style="width:50.5%"></div></div><span class="pct">937s · 51%</span></div>
+      <div class="bar"><span class="name">score</span><div class="track"><div class="fill" style="width:43.7%"></div></div><span class="pct">812s · 44%</span></div>
+      <div class="bar"><span class="name">fit</span><div class="track"><div class="fill cold" style="width:3.4%"></div></div><span class="pct">62s · 3%</span></div>
+      <div class="bar"><span class="name">data_conversion</span><div class="track"><div class="fill cold" style="width:1.9%"></div></div><span class="pct">36s · 2%</span></div>
+      <div class="bar"><span class="name">predict</span><div class="track"><div class="fill cold" style="width:0.5%"></div></div><span class="pct">8s · &lt;1%</span></div>
+      <div class="bar"><span class="name">split_generation</span><div class="track"><div class="fill cold" style="width:0.05%"></div></div><span class="pct">0.3s · &lt;1%</span></div>
+    </div>
+  </div>
+
+  <!-- 2. THE LOOP -->
+  <h2><span class="num">2</span> The loop — perf agent is a sidecar fork, not a blocker</h2>
+
+  <div class="lane">
+    <div class="label">Autoloop<small>main thread</small></div>
+    <div class="track">
+      <span class="step">iter N: plan</span>
+      <span class="arr">→</span>
+      <span class="step">build feature</span>
+      <span class="arr">→</span>
+      <span class="step">run_NN.py</span>
+      <span class="arr">→</span>
+      <span class="step accent">harness_response.json frozen</span>
+      <span class="arr">→</span>
+      <span class="step">iter N+1: plan</span>
+    </div>
+  </div>
+  <div class="lane">
+    <div class="label">Perf Bounty<small>fork, async</small></div>
+    <div class="track">
+      <span class="arr">↳ spawn</span>
+      <span class="step">read timing ledger</span>
+      <span class="arr">→</span>
+      <span class="step">pick bottleneck</span>
+      <span class="arr">→</span>
+      <span class="step">propose patch</span>
+      <span class="arr">→</span>
+      <span class="step">replay run X</span>
+      <span class="arr">→</span>
+      <span class="step accent">equivalence check</span>
+      <span class="arr">→</span>
+      <span class="step win">✓ merge + log win</span>
+    </div>
+  </div>
+  <div class="lane">
+    <div class="label">If fail<small>on the same lane</small></div>
+    <div class="track">
+      <span class="arr">↳</span>
+      <span class="step">log attempt to perf_attempts.jsonl</span>
+      <span class="arr">→</span>
+      <span class="step">no merge, no churn</span>
+      <span class="arr">→</span>
+      <span class="step">technique marked tried for (file, bottleneck)</span>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>Key property:</strong> the bounty agent never blocks the main autoloop. iter N+1 starts whether the patch lands or not. Wins accrue in the background.
+  </div>
+
+  <!-- 3. WHEN TO TRIGGER -->
+  <h2><span class="num">3</span> When to fire — harness always, features gated</h2>
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>Harness — fire on every run</h3>
+      <p>Harness shape is uniform across runs. Same stages, same response contract. Pattern reuse is high. Always cheap to try; wins compound across the whole project.</p>
+    </div>
+    <div class="card">
+      <h3>Feature builds — fire when worth it</h3>
+      <p>Feature code is heterogeneous. Some families finish in 8s. Some take 40 min. Spending agent budget on the fast ones is waste.</p>
+    </div>
+  </div>
+
+  <div class="tree">
+on every harness run:
+  <span class="hit">fire bounty agent</span>   # uniform, deterministic, always pays back
+
+on every feature build (after cache.put):
+  if total_seconds &gt; 60
+     OR rows_per_second &lt; 100
+     OR cache_size_mb &gt; 500
+     OR matches_pattern(prior_win):
+       <span class="hit">fire bounty agent</span>
+  else:
+       <span class="skip">skip — record &quot;fast enough&quot; in feature_perf.jsonl</span>
+
+after 3 failed attempts on same (file, bottleneck_stage):
+  <span class="branch">cool down</span>: do not retry for 5 iterations
+  </div>
+
+  <!-- 4. EQUIVALENCE CONTRACT -->
+  <h2><span class="num">4</span> The equivalence contract — what &quot;same answer, faster&quot; means</h2>
+  <div class="contract">
+    <div class="col">
+      <h4>Frozen inputs (run X oracle)</h4>
+      <ul>
+        <li>Same input dataframe (parquet hash pinned)</li>
+        <li>Same model config, same seed</li>
+        <li>Same outcome version, same feature dictionary</li>
+        <li>Same git_sha for non-perf code</li>
+      </ul>
+    </div>
+    <div class="mid">≡</div>
+    <div class="col">
+      <h4>Required equalities (modified code)</h4>
+      <ul>
+        <li><code>predictions.parquet</code> hash equal — OR row-wise corr &gt; 0.99999</li>
+        <li>Headline metric within <code>1e-6</code> absolute</li>
+        <li>All <code>HarnessResponse</code> fields equal modulo <code>performance.*</code> and timestamps</li>
+        <li>For features: cache parquet hash equal, column-by-column</li>
+      </ul>
+    </div>
+  </div>
+  <div class="callout">
+    <strong>Win condition:</strong> equivalence passes <em>and</em> wall time drops by ≥ 10% on the same sample tier. Below 10% is &quot;noise win&quot;, logged but not merged. ≥ 25% is a celebrated win.
+  </div>
+
+  <!-- 5. THE LEDGER -->
+  <h2><span class="num">5</span> The wins ledger — measurement is the incentive</h2>
+  <table class="ledger">
+    <thead>
+      <tr>
+        <th>iter</th><th>target</th><th>bottleneck</th><th>technique</th>
+        <th class="num">before</th><th class="num">after</th><th class="num">speedup</th>
+        <th>equiv</th><th>verdict</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>4</td><td>harness.py</td><td>aggregate</td><td>parallel fold reduction (joblib)</td>
+        <td class="num">937s</td><td class="num">241s</td><td class="num win">3.9×</td>
+        <td>✓</td><td class="win">merged</td>
+      </tr>
+      <tr>
+        <td>5</td><td>harness.py</td><td>score</td><td>vectorized AUC w/ sklearn _ranking</td>
+        <td class="num">812s</td><td class="num">198s</td><td class="num win">4.1×</td>
+        <td>✓ corr=1.0</td><td class="win">merged</td>
+      </tr>
+      <tr>
+        <td>6</td><td>features/email_content_nlp/</td><td>embedding loop</td><td>batched openai calls (n=64 → n=512)</td>
+        <td class="num">2104s</td><td class="num">340s</td><td class="num win">6.2×</td>
+        <td>✓ hash=</td><td class="win">merged</td>
+      </tr>
+      <tr>
+        <td>7</td><td>harness.py</td><td>fit</td><td>removed unused early_stopping_rounds path</td>
+        <td class="num">62s</td><td class="num">58s</td><td class="num">1.07×</td>
+        <td>✓</td><td class="fail">noise — logged, not merged</td>
+      </tr>
+      <tr>
+        <td>8</td><td>features/email_user_semantic_affinity</td><td>cosine kernel</td><td>numpy → torch matmul</td>
+        <td class="num">920s</td><td class="num">880s</td><td class="num">1.04×</td>
+        <td>✗ corr=0.998</td><td class="fail">rejected — drift on float32</td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="font-size:12.5px; color:var(--muted); margin-top:10px;">
+    Path: <code class="kbd">projects/{project}/autoloop/perf_wins.jsonl</code>.
+    Leaderboard view added to the existing <code class="kbd">ds_v2:leaderboard</code> skill so cumulative wall-time saved shows up next to AUC.
+  </p>
+
+  <!-- 6. THE INCENTIVE -->
+  <h2><span class="num">6</span> The pretend incentive — make the agent want the biggest win</h2>
+  <div class="grid grid-3">
+    <div class="card">
+      <h3>Score function</h3>
+      <p><code class="kbd">score = log2(speedup) · seconds_saved · equivalence_strict</code> — rewards big multipliers on slow targets, zero for drift.</p>
+    </div>
+    <div class="card">
+      <h3>Per-technique leaderboard</h3>
+      <p>Group wins by technique tag (parallelize / vectorize / batch / prune / cache). The agent reads its own history and prefers proven moves over novel ones for the same bottleneck shape.</p>
+    </div>
+    <div class="card">
+      <h3>Cumulative dashboard</h3>
+      <p>&quot;Hours of compute saved since autoloop started.&quot; Single number, surfaced in the daily slack ping. This is the visible win the user cares about.</p>
+    </div>
+  </div>
+
+  <!-- 7. KNOWLEDGE LIBRARY -->
+  <h2><span class="num">7</span> Knowledge library — one-off features, shared patterns</h2>
+  <div class="card">
+    <h3>The asymmetry</h3>
+    <p>Feature <em>code</em> is one-off. Feature <em>bottlenecks</em> fall into ~12 recurring shapes (row-wise apply with API, sync IO loop, np↔pd roundtrip, missing batch, unindexed merge). The library lives at the shape layer.</p>
+  </div>
+
+  <div class="grid grid-2" style="margin-top:14px;">
+    <div class="card">
+      <h3>A. Recipe catalog <span style="color:var(--win); font-weight:400; font-size:11px;">— start here</span></h3>
+      <p>Markdown files under <code class="kbd">libs/autoloop/perf_recipes/</code>. One per technique: name, fingerprint, before/after, libs, expected speedup, drift pitfalls. Curated; auto-promotion rule suggests new recipes after 3 wins of the same technique.</p>
+    </div>
+    <div class="card">
+      <h3>B. Champion diff bank <span style="color:var(--win); font-weight:400; font-size:11px;">— start here</span></h3>
+      <p>Every merged win auto-saved as a unified diff plus metadata (fingerprint, speedup, equivalence proof). Retrieved at fire-time by fingerprint match, injected as few-shot examples in the agent prompt.</p>
+    </div>
+    <div class="card">
+      <h3>C. AST / regex fingerprints <span style="color:var(--win); font-weight:400; font-size:11px;">— start here</span></h3>
+      <p>Small Python rules file. Deterministic: <code class="kbd">has_iterrows_with_api_call(node)</code> → tag <code class="kbd">row_wise_sync_io</code>. Cheap, fast, routes bottlenecks to relevant recipes and diffs.</p>
+    </div>
+    <div class="card">
+      <h3>D. Tried-and-failed ledger <span style="color:var(--accent); font-weight:600; font-size:11px;">— the moat</span></h3>
+      <p>Extends <code class="kbd">perf_attempts.jsonl</code> with <code class="kbd">failure_reason</code>, <code class="kbd">drift_pct</code>, <code class="kbd">fingerprint</code>. Cross-project visible. Saves more budget over a year than any positive recipe does — winning techniques are obvious, knowing what's broken isn't.</p>
+    </div>
+    <div class="card">
+      <h3>E. Repo antipattern doc <span style="color:var(--muted); font-weight:400; font-size:11px;">— defer</span></h3>
+      <p>Human prose at <code class="kbd">knowledge/perf-antipatterns.md</code>. The "why" stories that don't fit a diff. Integrates with existing retro flow. Compounds slowly.</p>
+    </div>
+    <div class="card">
+      <h3>F. Vector search (Pinecone) <span style="color:var(--muted); font-weight:400; font-size:11px;">— defer until ~20 wins</span></h3>
+      <p>Embed <code class="kbd">(before_code, technique)</code>. Earns its keep when code shapes blur and fingerprints stop discriminating cleanly. Pinecone already in <code class="kbd">Container</code>.</p>
+    </div>
+  </div>
+
+  <div class="callout" style="margin-top:16px;">
+    <strong>Lookup flow:</strong> fingerprint slow code (C) → pull top-3 champion diffs same tag (B) → drop already-tried failures for this <code>(fingerprint, project)</code> (D) → read recipe if one exists (A) → propose patch → equivalence check → write back to all four. Every win + every failure makes the next call cheaper.
+  </div>
+
+  <p style="font-size:12.5px; color:var(--muted); margin:14px 0 0;">
+    All four primary stores live at repo root (not per-project), so a win in <code class="kbd">civic_shout</code> teaches the next project automatically.
+  </p>
+
+  <!-- 8. RISKS -->
+  <h2><span class="num">8</span> Risks and how the design absorbs them</h2>
+  <div class="risks">
+    <div class="risk">
+      <h4>False-positive equivalence</h4>
+      <p>Float-order drift on parallel reductions can pass corr&gt;0.99999 but break downstream gap-finder slicing. <strong>Mitigation:</strong> equivalence check runs gap-finder on both outputs; any slice population shift &gt; 0.1% rejects.</p>
+    </div>
+    <div class="risk">
+      <h4>Code churn / merge conflicts</h4>
+      <p>Frequent harness edits collide with feature-engineering commits. <strong>Mitigation:</strong> perf commits land on <code>perf/auto-N</code> branches, are merged only between autoloop iterations, and a single &quot;active perf branch&quot; rule prevents pile-up.</p>
+    </div>
+    <div class="risk">
+      <h4>Agent over-optimizes the smoke run</h4>
+      <p>10% wins on a 1% sample may not generalize. <strong>Mitigation:</strong> equivalence + speedup must hold at the next-tier-up sample before merge. Smoke alone is &quot;candidate&quot;, not &quot;win.&quot;</p>
+    </div>
+    <div class="risk">
+      <h4>Bounty agent re-derives the wheel</h4>
+      <p>Same parallelization tried 5 runs in a row. <strong>Mitigation:</strong> <code>perf_attempts.jsonl</code> records every tried <code>(file, bottleneck, technique)</code> tuple including failures, fed back into the agent prompt as &quot;already tried.&quot;</p>
+    </div>
+  </div>
+
+  <!-- 9. SHAPE -->
+  <h2><span class="num">9</span> Where this lives in the repo</h2>
+  <div class="card">
+    <p style="margin-bottom:8px;">No new top-level concept — fits the existing autoloop module shape. Knowledge stores live at repo root so wins cross-pollinate.</p>
+    <pre style="font-family:ui-monospace,SF Mono,Menlo,monospace; font-size:12.5px; line-height:1.5; margin:0; color:var(--ink); background:transparent;">
+libs/autoloop/
+  perf_bounty.py        ← new: spawn, equivalence check, ledger writer
+  perf_recipes/         ← (A) curated technique catalog (markdown)
+  perf_fingerprints.py  ← (C) AST/regex rules → tags
+  prompts/
+    perf_bounty.md      ← new: agent prompt with score function + tried-list
+
+knowledge/                                ← repo-root, cross-project
+  perf_diff_bank/                         ← (B) auto-saved champion diffs by fingerprint
+    {fingerprint}/{iso_ts}_{project}.diff
+  perf_attempts.jsonl                     ← (D) tried-and-failed, cross-project visible
+  perf-antipatterns.md                    ← (E) deferred — human prose
+
+projects/{project}/autoloop/
+  perf_wins.jsonl       ← project-local merged wins (joins to diff bank)
+
+modules/ds_v2/skills/leaderboard/
+  + perf_view.py        ← extension: cumulative seconds saved view
+    </pre>
+  </div>
+
+  <p style="margin-top:36px; color:var(--muted); font-size:12.5px;">
+    Sidecar artifact filed at <code class="kbd">projects/civic_shout_action_rate_increase/autoloop/perf-bounty-plan.html</code>.
+    Numbers in the bottleneck chart are from <code class="kbd">timing_performance.jsonl</code> run_01 row (2026-05-13).
+    Ledger rows are illustrative.
+  </p>
+
+</div>
+</body>
+</html>

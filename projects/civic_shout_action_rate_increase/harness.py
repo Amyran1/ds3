@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 from enum import Enum
@@ -15,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import average_precision_score, roc_auc_score
 
+from libs.perf_equivalence import compute_predictions_hash
 from projects.civic_shout_action_rate_increase.harness_cache import (
     HarnessCache,
     data_fingerprint,
@@ -238,6 +240,7 @@ class HarnessResponse(BaseModel):
     diagnostics: list[HarnessDiagnostic] = Field(default_factory=list)
     artifacts: list[HarnessArtifact] = Field(default_factory=list)
     reproducibility: HarnessReproducibility
+    fingerprint: str = ""
 
     def to_result_row(self, run_metadata: RunResultMetadata) -> RunResultRow:
         return RunResultRow(
@@ -1974,6 +1977,16 @@ def harness(
 
     bottleneck = max(stage_timings, key=lambda st: st.seconds).stage
 
+    if predictions_dir is not None:
+        _pred_path = Path(predictions_dir) / "predictions.parquet"
+        _fingerprint = hashlib.sha256(
+            compute_predictions_hash(_pred_path).encode()
+            + str(round(primary_value, 10)).encode()
+            + str(round(primary_value - 0.5, 10)).encode()
+        ).hexdigest()[:16]
+    else:
+        _fingerprint = ""
+
     response = CivicShoutHarnessResponse(
         summary=HarnessSummary(
             primary_metric_name="roc_auc_residualized_user_main_effect_x_email_popularity_pair",
@@ -2053,6 +2066,7 @@ def harness(
             ml_model_args=ml_model_config.args,
             data_fingerprint=None,
         ),
+        fingerprint=_fingerprint,
     )
 
     return response

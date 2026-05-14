@@ -1,0 +1,31 @@
+# Perf bounty agent — allowed writes (everything else is denied)
+# Allow: the candidate harness.py and the diff output file only.
+
+# Git configuration — read-only to perf bounty agent
+\.gitignore$
+
+# Lock and manifest files — do not modify
+\.lock$
+\.toml$
+(?<!/tmp/).*\.yaml$
+(?<!/tmp/).*\.yml$
+
+# Ledger files — supervisor-owned
+/runs/results\.jsonl$
+/runs/eda_results\.jsonl$
+/runs/discovery_results\.jsonl$
+
+# Knowledge stores — read-only to perf bounty agent
+(^|/)knowledge/
+
+# Outcome definitions — read-only
+(^|/)outcomes/
+
+# Feature families — read-only
+(^|/)features/
+
+# Entity caches — read-only (cross-cutting)
+(^|/)entities/
+
+# Library code — the agent must NOT modify libs
+(^|/)libs/
