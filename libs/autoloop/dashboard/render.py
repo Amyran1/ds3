@@ -614,11 +614,19 @@ def _build_iter_table(
             row_cls = "champion-row"
         elif exec_d is not None:
             rrs = exec_dict.get("run_record_status", "unknown")
+            rrs_esc = html.escape(rrs)
             if rrs == "completed":
                 status_html = '<span class="status-ok">✓ shipped</span>'
+                row_cls = ""
+            elif rrs.startswith("failed_"):
+                status_html = f'<span class="status-bad">× {rrs_esc}</span>'
+                row_cls = "crashed-row"
+            elif rrs in ("pending", "running", "in_progress"):
+                status_html = f'<span class="status-running">⌛ {rrs_esc}</span>'
+                row_cls = "running-row"
             else:
-                status_html = f'<span class="status-ok">✓ {html.escape(rrs)}</span>'
-            row_cls = ""
+                status_html = f'<span class="status-running">⚠ {rrs_esc}</span>'
+                row_cls = ""
         else:
             planner_kill = planner.get("kill_reason")
             planner_exit = planner.get("exit_code", 0)
