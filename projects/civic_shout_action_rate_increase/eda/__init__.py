@@ -199,7 +199,19 @@ def _numeric_feature_cols(data: pl.DataFrame, feature_cols: list[str]) -> list[s
         c
         for c in feature_cols
         if c in data.columns
-        and data[c].dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.Float32, pl.Float64)
+        and data[c].dtype
+        in (
+            pl.Int8,
+            pl.Int16,
+            pl.Int32,
+            pl.Int64,
+            pl.UInt8,
+            pl.UInt16,
+            pl.UInt32,
+            pl.UInt64,
+            pl.Float32,
+            pl.Float64,
+        )
     ]
 
 
