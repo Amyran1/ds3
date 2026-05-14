@@ -406,6 +406,62 @@ def test_class_balance_excludes_sparse_cells():
     assert row.class_balance_n_cells_excluded > 0
 
 
+def test_cross_fold_parallel_vs_serial_determinism():
+    df = make_synthetic_user_emails(seed=42)
+    r_serial = harness(
+        df,
+        FEATURE_COLS,
+        _MODEL_CONFIG,
+        sample_seed=99,
+        fold_n_jobs=1,
+        inner_threads=1,
+        disable_cache=True,
+    )
+    r_parallel = harness(
+        df,
+        FEATURE_COLS,
+        _MODEL_CONFIG,
+        sample_seed=99,
+        fold_n_jobs=8,
+        inner_threads=1,
+        disable_cache=True,
+    )
+
+    assert (
+        abs(r_serial.summary.primary_metric_value - r_parallel.summary.primary_metric_value) < 1e-12
+    ), (
+        f"primary_metric_value mismatch: serial={r_serial.summary.primary_metric_value}, "
+        f"parallel={r_parallel.summary.primary_metric_value}"
+    )
+
+    serial_fold_aucs = [m.value for m in r_serial.metrics.by_fold]
+    parallel_fold_aucs = [m.value for m in r_parallel.metrics.by_fold]
+    assert len(serial_fold_aucs) == len(parallel_fold_aucs)
+    for a, b in zip(serial_fold_aucs, parallel_fold_aucs):
+        assert abs(a - b) < 1e-12, f"fold AUC mismatch: {a} vs {b}"
+
+    assert (
+        abs((r_serial.metrics.primary.ci_low or 0.0) - (r_parallel.metrics.primary.ci_low or 0.0))
+        < 1e-12
+    ), (
+        f"ci_low mismatch: serial={r_serial.metrics.primary.ci_low}, parallel={r_parallel.metrics.primary.ci_low}"
+    )
+    assert (
+        abs((r_serial.metrics.primary.ci_high or 0.0) - (r_parallel.metrics.primary.ci_high or 0.0))
+        < 1e-12
+    ), (
+        f"ci_high mismatch: serial={r_serial.metrics.primary.ci_high}, parallel={r_parallel.metrics.primary.ci_high}"
+    )
+
+    for i, (fm_s, fm_p) in enumerate(zip(r_serial.metrics.by_fold, r_parallel.metrics.by_fold)):
+        assert abs((fm_s.ci_low or 0.0) - (fm_p.ci_low or 0.0)) < 1e-12, (
+            f"fold {i} ci_low mismatch: {fm_s.ci_low} vs {fm_p.ci_low}"
+        )
+        assert abs((fm_s.ci_high or 0.0) - (fm_p.ci_high or 0.0)) < 1e-12, (
+            f"fold {i} ci_high mismatch: {fm_s.ci_high} vs {fm_p.ci_high}"
+        )
+
+
 def test_bootstrap_parallel_vs_serial_determinism():
     rng = np.random.default_rng(7)
     n_users = 200
@@ -418,6 +474,17 @@ def test_bootstrap_parallel_vs_serial_determinism():
     parallel = _user_block_bootstrap(y, s_resid, user_ids, n_boot=100, seed=42, n_jobs=-1)
     assert np.allclose(serial, parallel, atol=1e-12), (
         f"Serial and parallel bootstrap AUCs differ: max_diff={np.max(np.abs(serial - parallel))}"
+    )
+
+    # bootstrap_n_jobs=3 must give identical results to bootstrap_n_jobs=1
+    n_bootstrap_3 = _user_block_bootstrap(
+        y, s_resid, user_ids, n_boot=100, seed=42, n_jobs=1, bootstrap_n_jobs=3
+    )
+    n_bootstrap_1 = _user_block_bootstrap(
+        y, s_resid, user_ids, n_boot=100, seed=42, n_jobs=1, bootstrap_n_jobs=1
+    )
+    assert np.allclose(n_bootstrap_3, n_bootstrap_1, atol=1e-12), (
+        f"bootstrap_n_jobs=3 vs 1 differ: max_diff={np.max(np.abs(n_bootstrap_3 - n_bootstrap_1))}"
     )
 
     fold_results = [
@@ -435,4 +502,18 @@ def test_bootstrap_parallel_vs_serial_determinism():
     )
     assert abs(ci_serial[1] - ci_parallel[1]) < 1e-12, (
         f"ci_high mismatch: serial={ci_serial[1]}, parallel={ci_parallel[1]}"
+    )
+
+    # bootstrap_n_jobs=3 pooled must give identical CIs to bootstrap_n_jobs=1
+    ci_bn3 = _pooled_user_block_bootstrap_mean_of_folds(
+        fold_results, n_boot=100, seed=42, n_jobs=1, bootstrap_n_jobs=3
+    )
+    ci_bn1 = _pooled_user_block_bootstrap_mean_of_folds(
+        fold_results, n_boot=100, seed=42, n_jobs=1, bootstrap_n_jobs=1
+    )
+    assert abs(ci_bn3[0] - ci_bn1[0]) < 1e-12, (
+        f"pooled ci_low mismatch bootstrap_n_jobs=3 vs 1: {ci_bn3[0]} vs {ci_bn1[0]}"
+    )
+    assert abs(ci_bn3[1] - ci_bn1[1]) < 1e-12, (
+        f"pooled ci_high mismatch bootstrap_n_jobs=3 vs 1: {ci_bn3[1]} vs {ci_bn1[1]}"
     )

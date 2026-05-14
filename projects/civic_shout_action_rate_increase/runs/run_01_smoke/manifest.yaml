@@ -2,8 +2,8 @@ run_id: run_01_smoke
 project: civic_shout_action_rate_increase
 comparison_group: action_rate_increase_temporal_holdout_residualized_auc_v1
 scope: smoke
-git_sha: 566553d
-recorded_at_utc: '2026-05-14T14:40:57.516532+00:00'
+git_sha: 0cf718d
+recorded_at_utc: '2026-05-14T15:56:54.032776+00:00'
 outcome:
   version: v1
   name: actioned_24h_per_send
@@ -32,5 +32,5 @@ sample:
   frac: 0.001
   seed: 42
 performance:
-  elapsed_seconds: 213.33940975001315
-  bottleneck_stage: score
+  elapsed_seconds: 548.6859055410023
+  bottleneck_stage: aggregate

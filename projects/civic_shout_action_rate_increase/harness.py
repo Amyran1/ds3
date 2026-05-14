@@ -15,6 +15,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import average_precision_score, roc_auc_score
 
+from projects.civic_shout_action_rate_increase.harness_cache import (
+    HarnessCache,
+    data_fingerprint,
+    fold_train_fingerprint,
+)
+
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
@@ -714,6 +720,7 @@ def _user_block_bootstrap(
     n_boot: int = 500,
     seed: int = 42,
     n_jobs: int = -1,
+    bootstrap_n_jobs: int = -1,
 ) -> np.ndarray:
     """Sample whole users with replacement, preserving multiplicity, recompute AUC per resample."""
     rng = np.random.default_rng(seed)
@@ -739,7 +746,8 @@ def _user_block_bootstrap(
             return 0.5
         return float(roc_auc_score(y_b, s_b))
 
-    _effective_jobs = 1 if (n_jobs == 1 or len(y) < 50_000) else n_jobs
+    _resolved_jobs = bootstrap_n_jobs if bootstrap_n_jobs != -1 else n_jobs
+    _effective_jobs = 1 if (_resolved_jobs == 1 or len(y) < 50_000) else _resolved_jobs
     results = Parallel(n_jobs=_effective_jobs, backend="loky")(
         delayed(_one_replicate)(int(s)) for s in child_seeds
     )
@@ -751,6 +759,7 @@ def _pooled_user_block_bootstrap_mean_of_folds(
     n_boot: int = 500,
     seed: int = 42,
     n_jobs: int = -1,
+    bootstrap_n_jobs: int = -1,
 ) -> tuple[float, float]:
     """Cluster-bootstrap the mean-across-folds AUC estimator.
 
@@ -801,7 +810,8 @@ def _pooled_user_block_bootstrap_mean_of_folds(
         return float(np.mean(fold_aucs_replicate))
 
     total_rows = sum(len(r["y_test"]) for r in fold_results)
-    _effective_jobs = 1 if (n_jobs == 1 or total_rows < 50_000) else n_jobs
+    _resolved_jobs = bootstrap_n_jobs if bootstrap_n_jobs != -1 else n_jobs
+    _effective_jobs = 1 if (_resolved_jobs == 1 or total_rows < 50_000) else _resolved_jobs
     results = Parallel(n_jobs=_effective_jobs, backend="loky")(
         delayed(_one_replicate)(int(s)) for s in child_seeds
     )
@@ -1115,6 +1125,124 @@ def _compute_user_main_effect_lgbm(
 
 
 # ---------------------------------------------------------------------------
+# Per-fold worker (pure function — safe for joblib loky dispatch)
+# ---------------------------------------------------------------------------
+
+
+def _run_one_fold(
+    train_df: pl.DataFrame,
+    test_df: pl.DataFrame,
+    q_label: str,
+    feature_cols: list[str],
+    outcome_variable: str,
+    ml_model_config: ML_Model_Config,
+    inner_threads: int,
+    confound_overlap_threshold: int,
+    seed: int,
+    bootstrap_n_jobs: int,
+) -> dict[str, Any]:
+    """Execute one quarterly fold: fit → predict → residualize → score → bootstrap CI."""
+    lgbm_args = dict(ml_model_config.args)
+    lgbm_args["n_jobs"] = inner_threads
+    lgbm_args["random_state"] = seed
+    lgbm_args["verbose"] = -1
+
+    X_train = train_df.select(feature_cols).fill_null(0).to_numpy()
+    y_train = train_df[outcome_variable].to_numpy().astype(np.float32)
+    X_test = test_df.select(feature_cols).fill_null(0).to_numpy()
+    y_test = test_df[outcome_variable].to_numpy().astype(np.float32)
+
+    c_u_test = test_df["user_prior_engagement_score"].to_numpy()
+    c_e_test = test_df["email_popularity_score"].to_numpy()
+
+    model = LGBMClassifier(**lgbm_args)
+    model.fit(X_train, y_train)
+
+    s_test = model.predict_proba(X_test)[:, 1]
+    s_train = model.predict_proba(X_train)[:, 1]
+
+    c_u_main_effect_test = _compute_user_main_effect_lgbm(
+        train_df,
+        test_df,
+        feature_cols,
+        ml_model_config,
+        outcome_variable,
+        seed=seed,
+        inner_threads=inner_threads,
+    )
+
+    auc_residualized, auc_dir_a, auc_dir_b, s_resid_xfit = _compute_residualized_auc_cross_fit(
+        y_test, s_test, c_u_main_effect_test, c_e_test, seed=seed
+    )
+
+    auc_residualized_old, _, _, s_resid_old = _compute_residualized_auc_cross_fit(
+        y_test, s_test, c_u_test, c_e_test, seed=seed
+    )
+
+    user_ids_test = test_df["user_id"].to_numpy()
+
+    boot_aucs = _user_block_bootstrap(
+        y_test,
+        s_resid_xfit,
+        user_ids_test,
+        n_boot=500,
+        seed=seed,
+        n_jobs=-1,
+        bootstrap_n_jobs=bootstrap_n_jobs,
+    )
+    ci_low = float(np.quantile(boot_aucs, 0.025))
+    ci_high = float(np.quantile(boot_aucs, 0.975))
+
+    fold_overlap_diag = _compute_confound_overlap_diagnostic(
+        fold_label=q_label,
+        c_u_test=c_u_main_effect_test,
+        c_e_test=c_e_test,
+        y_test=y_test,
+        min_positives_threshold=confound_overlap_threshold,
+    )
+
+    pred_rows = test_df.with_columns(
+        [
+            pl.Series("score", s_test),
+            pl.Series("score_residualized", s_resid_xfit),
+            pl.lit(q_label).alias("fold"),
+            pl.Series(
+                "row_loss",
+                (
+                    -y_test * np.log(np.clip(s_test, 1e-7, 1 - 1e-7))
+                    - (1 - y_test) * np.log(np.clip(1 - s_test, 1e-7, 1 - 1e-7))
+                ),
+            ),
+        ]
+    )
+
+    return {
+        "q_label": q_label,
+        "auc_residualized": auc_residualized,
+        "auc_residualized_old": auc_residualized_old,
+        "auc_dir_a": auc_dir_a,
+        "auc_dir_b": auc_dir_b,
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "y_test": y_test,
+        "s_test": s_test,
+        "s_train": s_train,
+        "s_resid": s_resid_xfit,
+        "s_resid_old": s_resid_old,
+        "c_u_test": c_u_test,
+        "c_u_main_effect_test": c_u_main_effect_test,
+        "c_e_test": c_e_test,
+        "user_ids": user_ids_test,
+        "test_df": test_df,
+        "train_df": train_df,
+        "n_train": len(train_df),
+        "n_test": len(test_df),
+        "fold_overlap_diag": fold_overlap_diag,
+        "pred_rows": pred_rows,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public harness
 # ---------------------------------------------------------------------------
 
@@ -1128,6 +1256,9 @@ def harness(
     sample_frac: float | None = None,
     sample_seed: int | None = None,
     predictions_dir: str | None = None,
+    fold_n_jobs: int = 8,
+    inner_threads: int | None = None,
+    disable_cache: bool = False,
 ) -> CivicShoutHarnessResponse:
     """Evaluate features against actioned_24h via quarterly walk-forward.
 
@@ -1141,7 +1272,13 @@ def harness(
     artifacts: list[HarnessArtifact] = []
 
     cpu_count = os.cpu_count() or 8
-    inner_threads = max(cpu_count - 1, 1)
+    _parallel_folds = fold_n_jobs != 1
+    _inner_threads: int = (
+        inner_threads
+        if inner_threads is not None
+        else (3 if _parallel_folds else max(cpu_count - 1, 1))
+    )
+    bootstrap_n_jobs = 3 if _parallel_folds else -1
 
     _is_smoke = sample_frac is not None and sample_frac <= 0.01
     _confound_overlap_threshold = 25 if _is_smoke else 100
@@ -1187,7 +1324,32 @@ def harness(
 
     population_n_rows = len(work_df)
 
-    confound_df = _compute_confound_scores_full_data(work_df)
+    _harness_cache = HarnessCache()
+    _confound_fp = data_fingerprint(work_df)
+
+    _cached_confound = None if disable_cache else _harness_cache.get_confound_scores(_confound_fp)
+    if _cached_confound is not None:
+        confound_df = _cached_confound
+        diagnostics.append(
+            HarnessDiagnostic(
+                name="confound_cache_hit",
+                severity="info",
+                message="Confound scores loaded from disk cache.",
+                values={"hit": True, "fingerprint": _confound_fp[:8]},
+            )
+        )
+    else:
+        confound_df = _compute_confound_scores_full_data(work_df)
+        if not disable_cache:
+            _harness_cache.put_confound_scores(_confound_fp, confound_df)
+        diagnostics.append(
+            HarnessDiagnostic(
+                name="confound_cache_hit",
+                severity="info",
+                message="Confound scores computed and written to disk cache.",
+                values={"hit": False, "fingerprint": _confound_fp[:8]},
+            )
+        )
 
     # Preserve the full frame for the leakage audit before sampling narrows it.
     # The audit re-derives scores from strictly-prior rows; on a sample it would
@@ -1287,174 +1449,82 @@ def harness(
     # ------------------------------------------------------------------
     # Stages 4–7: fit / predict / residualize_scores / score per fold
     # ------------------------------------------------------------------
-    lgbm_args = dict(ml_model_config.args)
-    lgbm_args["n_jobs"] = inner_threads
 
-    fold_results: list[dict[str, Any]] = []
-    all_train_scores: list[np.ndarray] = []
-    all_test_scores: list[np.ndarray] = []
-    all_rows: list[pl.DataFrame] = []
-
-    t_fit_total = 0.0
-    t_predict_total = 0.0
-    t_score_total = 0.0
-
+    # Leakage audit: run once in main process before parallel dispatch.
     leak_diag_user: HarnessDiagnostic | None = None
     leak_diag_email: HarnessDiagnostic | None = None
+    try:
+        leak_diag_user = _assert_no_future_leak(
+            full_work_df, "user_prior_engagement_score", "date_sent", "user_id"
+        )
+        leak_diag_email = _assert_no_future_leak(
+            full_work_df, "email_popularity_score", "date_sent", "email_id"
+        )
+    except LeakageError:
+        raise
 
-    # CPU utilization measurement during fit of first fold
+    # Pre-spawn per-fold seeds for determinism (#22 seed-pre-spawn pattern).
+    rng_folds = np.random.default_rng(sample_seed if sample_seed is not None else 0)
+    n_folds = len(folds)
+    fold_seeds = rng_folds.integers(0, 2**32 - 1, size=n_folds)
+
+    # Pre-materialize fold slices (#23 — build once, pickle once per worker).
+    fold_pairs = [(q_label, train_df, test_df) for q_label, train_df, test_df in folds]
+
+    # CPU utilization measurement across the parallel fold batch.
+    import threading
+
     cpu_util_samples: list[float] = []
     proc = psutil.Process()
 
-    for fold_idx, (q_label, train_df, test_df) in enumerate(folds):
-        X_train = train_df.select(feature_cols).fill_null(0).to_numpy()
-        y_train = train_df["actioned_24h"].to_numpy().astype(np.float32)
-        X_test = test_df.select(feature_cols).fill_null(0).to_numpy()
-        y_test = test_df["actioned_24h"].to_numpy().astype(np.float32)
+    def _sample_cpu() -> None:
+        for _ in range(6):
+            time.sleep(1.0)
+            try:
+                cpu_util_samples.append(proc.cpu_percent(interval=None))
+            except Exception:
+                pass
 
-        # Old RFM-style user confound (full-data computed, kept for secondary metric)
-        c_u_test = test_df["user_prior_engagement_score"].to_numpy()
-        c_e_test = test_df["email_popularity_score"].to_numpy()
+    cpu_thread = threading.Thread(target=_sample_cpu, daemon=True)
+    cpu_thread.start()
 
-        # Fit
-        t_fit_start = time.perf_counter()
-        model = LGBMClassifier(**lgbm_args)
+    t_fold_wall_start = time.perf_counter()
 
-        if fold_idx == 0:
-            # Sample CPU utilization during first fold's fit
-            import threading
-
-            def _sample_cpu() -> None:
-                for _ in range(3):
-                    time.sleep(0.5)
-                    try:
-                        cpu_util_samples.append(proc.cpu_percent(interval=None))
-                    except Exception:
-                        pass
-
-            cpu_thread = threading.Thread(target=_sample_cpu, daemon=True)
-            cpu_thread.start()
-            model.fit(X_train, y_train)
-            cpu_thread.join(timeout=5.0)
-        else:
-            model.fit(X_train, y_train)
-
-        t_fit_total += time.perf_counter() - t_fit_start
-
-        # Predict
-        t_pred_start = time.perf_counter()
-        s_test = model.predict_proba(X_test)[:, 1]
-        s_train = model.predict_proba(X_train)[:, 1]
-
-        # Per-fold user main effect score (strict: trained on train, predicted on test)
-        c_u_main_effect_test = _compute_user_main_effect_lgbm(
+    _effective_fold_jobs = fold_n_jobs if fold_n_jobs != 1 else 1
+    raw_fold_results: list[dict[str, Any]] = Parallel(n_jobs=_effective_fold_jobs, backend="loky")(
+        delayed(_run_one_fold)(
             train_df,
             test_df,
+            q_label,
             feature_cols,
-            ml_model_config,
             outcome_variable,
-            seed=42,
-            inner_threads=inner_threads,
+            ml_model_config,
+            _inner_threads,
+            _confound_overlap_threshold,
+            int(fold_seeds[k]),
+            bootstrap_n_jobs,
         )
-        t_predict_total += time.perf_counter() - t_pred_start
+        for k, (q_label, train_df, test_df) in enumerate(fold_pairs)
+    )  # type: ignore[assignment]
 
-        all_train_scores.append(s_train)
-        all_test_scores.append(s_test)
+    t_fold_wall_total = time.perf_counter() - t_fold_wall_start
+    cpu_thread.join(timeout=2.0)
 
-        # Residualize + score
-        t_score_start = time.perf_counter()
+    fold_results: list[dict[str, Any]] = raw_fold_results
+    all_rows: list[pl.DataFrame] = [r["pred_rows"] for r in fold_results]
+    all_train_scores: list[np.ndarray] = [r["s_train"] for r in fold_results]
 
-        if fold_idx == 0 and leak_diag_user is None:
-            try:
-                leak_diag_user = _assert_no_future_leak(
-                    full_work_df, "user_prior_engagement_score", "date_sent", "user_id"
-                )
-                leak_diag_email = _assert_no_future_leak(
-                    full_work_df, "email_popularity_score", "date_sent", "email_id"
-                )
-            except LeakageError:
-                raise
-
-        # NEW primary: residualize against (user_main_effect_score, email_popularity_score)
-        auc_residualized, auc_dir_a, auc_dir_b, s_resid_xfit = _compute_residualized_auc_cross_fit(
-            y_test, s_test, c_u_main_effect_test, c_e_test, seed=42
-        )
-
-        # OLD secondary: residualize against (user_prior_engagement_score, email_popularity_score)
-        auc_residualized_old, _, _, s_resid_old = _compute_residualized_auc_cross_fit(
-            y_test, s_test, c_u_test, c_e_test, seed=42
-        )
-
-        user_ids_test = test_df["user_id"].to_numpy()
-
-        boot_aucs = _user_block_bootstrap(
-            y_test, s_resid_xfit, user_ids_test, n_boot=500, seed=42, n_jobs=-1
-        )
-        ci_low = float(np.quantile(boot_aucs, 0.025))
-        ci_high = float(np.quantile(boot_aucs, 0.975))
-
-        t_score_total += time.perf_counter() - t_score_start
-
-        fold_overlap_diag = _compute_confound_overlap_diagnostic(
-            fold_label=q_label,
-            c_u_test=c_u_main_effect_test,
-            c_e_test=c_e_test,
-            y_test=y_test,
-            min_positives_threshold=_confound_overlap_threshold,
-        )
-        diagnostics.append(fold_overlap_diag)
-
-        fold_results.append(
-            {
-                "q_label": q_label,
-                "auc_residualized": auc_residualized,
-                "auc_residualized_old": auc_residualized_old,
-                "auc_dir_a": auc_dir_a,
-                "auc_dir_b": auc_dir_b,
-                "ci_low": ci_low,
-                "ci_high": ci_high,
-                "y_test": y_test,
-                "s_test": s_test,
-                "s_resid": s_resid_xfit,
-                "s_resid_old": s_resid_old,
-                "c_u_test": c_u_test,
-                "c_u_main_effect_test": c_u_main_effect_test,
-                "c_e_test": c_e_test,
-                "user_ids": user_ids_test,
-                "test_df": test_df,
-                "train_df": train_df,
-                "n_train": len(train_df),
-                "n_test": len(test_df),
-            }
-        )
-
-        all_rows.append(
-            test_df.with_columns(
-                [
-                    pl.Series("score", s_test),
-                    pl.Series("score_residualized", s_resid_xfit),
-                    pl.lit(q_label).alias("fold"),
-                    pl.Series(
-                        "row_loss",
-                        (
-                            -y_test * np.log(np.clip(s_test, 1e-7, 1 - 1e-7))
-                            - (1 - y_test) * np.log(np.clip(1 - s_test, 1e-7, 1 - 1e-7))
-                        ),
-                    ),
-                ]
-            )
-        )
+    for r in fold_results:
+        diagnostics.append(r["fold_overlap_diag"])
 
     stage_timings.append(
-        HarnessStageTiming(stage="fit", seconds=t_fit_total, owner="model", calls=len(folds))
+        HarnessStageTiming(stage="fit", seconds=t_fold_wall_total, owner="model", calls=n_folds)
     )
     stage_timings.append(
-        HarnessStageTiming(
-            stage="predict", seconds=t_predict_total, owner="model", calls=len(folds)
-        )
+        HarnessStageTiming(stage="predict", seconds=0.0, owner="model", calls=n_folds)
     )
     stage_timings.append(
-        HarnessStageTiming(stage="score", seconds=t_score_total, owner="harness", calls=len(folds))
+        HarnessStageTiming(stage="score", seconds=0.0, owner="harness", calls=n_folds)
     )
 
     if leak_diag_user:
@@ -1477,7 +1547,7 @@ def harness(
     k = len(fold_aucs)
     if k > 1:
         primary_ci_low, primary_ci_high = _pooled_user_block_bootstrap_mean_of_folds(
-            fold_results, n_boot=500, seed=42, n_jobs=-1
+            fold_results, n_boot=500, seed=42, n_jobs=-1, bootstrap_n_jobs=bootstrap_n_jobs
         )
     else:
         primary_ci_low = fold_results[0]["ci_low"]
@@ -1966,9 +2036,9 @@ def harness(
             model_owned_seconds=model_secs,
             peak_memory_mb=None,
             parallelism=HarnessParallelism(
-                outer_n_jobs=1,
-                inner_threads=inner_threads,
-                backend="sequential",
+                outer_n_jobs=_effective_fold_jobs,
+                inner_threads=_inner_threads,
+                backend="loky" if _effective_fold_jobs != 1 else "sequential",
                 cpu_count_observed=cpu_count,
                 cpu_utilization_pct=cpu_util,
             ),

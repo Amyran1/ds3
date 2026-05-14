@@ -802,6 +802,7 @@ def eda(
     feature_cols: list[str],
     outcome_variable: str,
     eda_config: CivicShoutEDAConfig | EDAConfig | None = None,
+    outcome_version: str = "v1",
 ) -> CivicShoutEDAResponse:
     """Run all registered Tier 1 EDA methods; return structured response."""
     if eda_config is None:
@@ -952,6 +953,7 @@ def eda(
         method_results=method_results,
         eda_summary=eda_summary,
         data_profile=data_profile,
+        outcome_version=outcome_version,
     )
 
 
