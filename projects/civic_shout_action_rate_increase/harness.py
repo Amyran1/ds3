@@ -917,7 +917,7 @@ def _weighted_rank_auc(
 # ---------------------------------------------------------------------------
 
 
-@numba.njit(cache=True)
+@numba.njit(cache=True, nogil=True)
 def _weighted_rank_auc_numba(
     y_sorted_asc: np.ndarray,
     s_sorted_asc: np.ndarray,
@@ -1925,12 +1925,13 @@ def harness(
 
     k = len(fold_aucs)
     if k > 1:
+        # All fold threads have finished; no over-subscription risk — use all cores.
         primary_ci_low, primary_ci_high = _pooled_user_block_bootstrap_mean_of_folds(
             fold_results,
             n_boot=bootstrap_n_resamples,
             seed=42,
             n_jobs=-1,
-            bootstrap_n_jobs=bootstrap_n_jobs,
+            bootstrap_n_jobs=-1,
         )
     else:
         primary_ci_low = fold_results[0]["ci_low"]
