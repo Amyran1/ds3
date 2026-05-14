@@ -122,11 +122,8 @@ def test_residualized_above_floor_when_features_add_signal(
     full_response: CivicShoutHarnessResponse,
 ):
     primary = full_response.summary.primary_metric_value
-    sec = {m.name: m.value for m in full_response.metrics.secondary}
-    old_primary = sec.get("roc_auc_residualized_user_prior_x_email_popularity_pair")
     assert primary > 0.51, f"stricter residualized AUC = {primary:.4f}, expected > 0.51"
     assert primary < 0.85, f"stricter residualized AUC = {primary:.4f}, unexpectedly high"
-    assert old_primary is not None, "old secondary metric missing"
 
 
 def test_residual_collapses_when_features_are_confound(

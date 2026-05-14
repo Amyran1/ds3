@@ -1481,6 +1481,7 @@ def _run_one_fold(
     bootstrap_n_resamples: int = 500,
     cache: HarnessCache | None = None,
     scope: str = "comparison",
+    report_old_rfm: bool = False,
 ) -> dict[str, Any]:
     """Execute one quarterly fold: fit → predict → residualize → score → bootstrap CI."""
     lgbm_args = dict(ml_model_config.args)
@@ -1525,9 +1526,14 @@ def _run_one_fold(
         y_test, s_test, c_u_main_effect_test, c_e_test, seed=seed
     )
 
-    auc_residualized_old, _, _, s_resid_old, _iso_secs_old = _resid_fn(
-        y_test, s_test, c_u_test, c_e_test, seed=seed
-    )
+    if report_old_rfm:
+        auc_residualized_old, _, _, s_resid_old, _iso_secs_old = _resid_fn(
+            y_test, s_test, c_u_test, c_e_test, seed=seed
+        )
+    else:
+        auc_residualized_old = None
+        s_resid_old = None
+        _iso_secs_old = 0.0
     _resid_seconds = time.perf_counter() - _t_resid
     _iso_fold_seconds = _iso_secs_primary + _iso_secs_old
 
@@ -1619,6 +1625,7 @@ def harness(
     bootstrap_n_resamples: int | None = None,
     scope: str = "comparison",
     report_supplementary: bool | None = None,
+    report_old_rfm: bool | None = None,
 ) -> CivicShoutHarnessResponse:
     """Evaluate features against actioned_24h via quarterly walk-forward.
 
@@ -1636,6 +1643,11 @@ def harness(
         report_supplementary = False
     elif report_supplementary is None:
         report_supplementary = scope == "champion_candidate"
+    # T2a: old-RFM secondary residualization gated per scope.
+    # champion_candidate defaults on; comparison + comparison_fast default off.
+    if report_old_rfm is None:
+        report_old_rfm = scope == "champion_candidate"
+    _report_old_rfm: bool = report_old_rfm
     stage_timings: list[HarnessStageTiming] = []
     diagnostics: list[HarnessDiagnostic] = []
     artifacts: list[HarnessArtifact] = []
@@ -1884,6 +1896,7 @@ def harness(
             bootstrap_n_resamples=bootstrap_n_resamples,
             cache=_harness_cache if not disable_cache else None,
             scope=scope,
+            report_old_rfm=_report_old_rfm,
         )
         for k, (q_label, train_df, test_df) in enumerate(fold_pairs)
     )  # type: ignore[assignment]
@@ -1950,7 +1963,10 @@ def harness(
     fold_aucs_old = [r["auc_residualized_old"] for r in fold_results]
     fold_labels = [r["q_label"] for r in fold_results]
     primary_value = float(np.mean(fold_aucs))
-    old_primary_value = float(np.mean(fold_aucs_old))
+    _old_rfm_fold_values = [v for v in fold_aucs_old if v is not None]
+    old_primary_value: float | None = (
+        float(np.mean(_old_rfm_fold_values)) if _old_rfm_fold_values else None
+    )
     fold_std = float(np.std(fold_aucs, ddof=1)) if len(fold_aucs) > 1 else 0.0
 
     k = len(fold_aucs)
@@ -2303,11 +2319,6 @@ def harness(
             direction="higher_is_better",
         ),
         HarnessMetric(
-            name="roc_auc_residualized_user_prior_x_email_popularity_pair",
-            value=old_primary_value,
-            direction="higher_is_better",
-        ),
-        HarnessMetric(
             name="roc_auc_residualized_user_main_effect_x_email_popularity_pair",
             value=primary_value,
             direction="higher_is_better",
@@ -2334,6 +2345,16 @@ def harness(
             name="pooled_positive_rate_test", value=positive_rate_test, direction="higher_is_better"
         ),
     ]
+
+    # T2a: old-RFM secondary is absent when report_old_rfm=False; emit only when computed.
+    if old_primary_value is not None:
+        secondary_metrics.append(
+            HarnessMetric(
+                name="roc_auc_residualized_user_prior_x_email_popularity_pair",
+                value=old_primary_value,
+                direction="higher_is_better",
+            )
+        )
 
     # T4.5: supplementary single-confound metrics are None in fast_iter; emit only when computed.
     if roc_auc_user_prior_only is not None:
@@ -2444,7 +2465,7 @@ def harness(
             result_notes=[
                 f"Quarterly walk-forward: {len(fold_results)} valid folds over {fold_labels[0]}–{fold_labels[-1]}.",
                 f"Fold AUCs: {[round(a, 4) for a in fold_aucs]}",
-                f"Old RFM-floor secondary: {round(old_primary_value, 4)} (user_prior_x_email_popularity).",
+                f"Old RFM-floor secondary: {round(old_primary_value, 4) if old_primary_value is not None else 'n/a'} (user_prior_x_email_popularity).",
                 "User main effect computed per-fold via LightGBM on train split (train/test separation guarantees no leak).",
             ],
         ),
