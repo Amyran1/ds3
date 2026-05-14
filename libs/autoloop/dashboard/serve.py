@@ -262,6 +262,22 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 body = f"<pre style='color:#dc2626'>{exc}</pre>".encode()
             self._respond(200, "text/html; charset=utf-8", body)
+        elif path.startswith("/brainstorm/") and path.endswith(".html"):
+            rel = path.removeprefix("/brainstorm/").removesuffix(".html")
+            if "/" in rel or "\\" in rel or ".." in rel or not rel:
+                self._respond(404, "text/plain", b"not found")
+                return
+            fpath = _OUT_DIR / "brainstorm" / f"{rel}.html"
+            if not fpath.is_file():
+                self._respond(404, "text/plain", b"brainstorm item not rendered yet")
+                return
+            body = fpath.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(body)
         else:
             self._respond(404, "text/plain", b"not found")
 
