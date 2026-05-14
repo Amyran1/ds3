@@ -905,7 +905,7 @@ def _weighted_rank_auc_numba(
 _weighted_rank_auc_numba(
     np.array([1, 0], dtype=np.int64),
     np.array([0.5, 0.7], dtype=np.float64),
-    np.array([1, 1], dtype=np.int64),
+    np.array([1, 1], dtype=np.int32),
 )
 
 
@@ -960,7 +960,7 @@ def _user_block_bootstrap(
     def _one_replicate(rep_seed: int) -> float:
         rep_rng = np.random.default_rng(rep_seed)
         user_multiplicity = rep_rng.multinomial(n_users, uniform_pvals).astype(np.int32, copy=False)
-        weights = user_multiplicity[row_to_user_idx].astype(np.int64, copy=False)
+        weights = user_multiplicity[row_to_user_idx]
         return _weighted_rank_auc_numba(
             y_sorted.astype(np.int64, copy=False),
             s_sorted.astype(np.float64, copy=False),
@@ -1045,7 +1045,7 @@ def _pooled_user_block_bootstrap_mean_of_folds(
             ).astype(np.int32, copy=False)
             if counts_fold.sum() == 0:
                 continue
-            weights = counts_fold[fold_row_to_user_idx].astype(np.int64, copy=False)
+            weights = counts_fold[fold_row_to_user_idx]
             auc_b = _weighted_rank_auc_numba(
                 y_sorted.astype(np.int64, copy=False),
                 s_sorted_fold.astype(np.float64, copy=False),
