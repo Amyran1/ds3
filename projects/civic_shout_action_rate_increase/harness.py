@@ -1013,8 +1013,10 @@ def _user_block_bootstrap(
     def _one_replicate(rep_seed: int) -> float:
         rep_rng = np.random.default_rng(rep_seed)
         sampled_users = rep_rng.choice(unique_users, size=n_users, replace=True)
-        sampled_user_idx = np.searchsorted(unique_users, sampled_users)
-        user_multiplicity = np.bincount(sampled_user_idx, minlength=n_users)
+        sampled_user_idx = np.searchsorted(unique_users, sampled_users).astype(np.int32, copy=False)
+        user_multiplicity = np.bincount(sampled_user_idx, minlength=n_users).astype(
+            np.int32, copy=False
+        )
         weights = user_multiplicity[row_to_user_idx].astype(np.int64, copy=False)
         return _weighted_rank_auc_numba(
             y_sorted.astype(np.int64, copy=False),
@@ -1051,33 +1053,61 @@ def _pooled_user_block_bootstrap_mean_of_folds(
     rng = np.random.default_rng(seed)
 
     all_user_ids = np.concatenate([r["user_ids"] for r in fold_results])
-    unique_users = np.unique(all_user_ids)
+    unique_users_global = np.unique(all_user_ids)
+    n_users_global = len(unique_users_global)
 
-    fold_sorted_data: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+    # Build per-fold sorted data and precompute global→fold user-index mapping once.
+    # Shape of fold entry: (y_sorted, s_sorted, row_to_user_idx, local_idx, in_mask, n_fold_users)
+    fold_sorted_data: list[
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]
+    ] = []
     for r in fold_results:
         uids = r["user_ids"]
         fold_unique = np.unique(uids)
+        n_fold = len(fold_unique)
         y_s, s_s, fold_row_to_user_idx = _build_sorted_user_map(
             r["y_test"], r["s_resid"], uids, fold_unique
         )
-        fold_sorted_data.append((y_s, s_s, fold_row_to_user_idx, fold_unique))
+        # For each global user, its index in fold_unique; -1 if absent.
+        pos = np.searchsorted(fold_unique, unique_users_global)
+        pos_clipped = np.clip(pos, 0, n_fold - 1)
+        in_fold = fold_unique[pos_clipped] == unique_users_global
+        mapping = np.where(in_fold, pos_clipped, -1).astype(np.int32)
+        in_mask = mapping >= 0
+        local_idx = mapping[in_mask].astype(np.int32)
+        fold_sorted_data.append((y_s, s_s, fold_row_to_user_idx, local_idx, in_mask, n_fold))
 
     child_seeds = rng.integers(0, 2**32 - 1, size=n_boot)
 
     def _one_replicate(rep_seed: int) -> float:
         rep_rng = np.random.default_rng(rep_seed)
-        sampled_users = rep_rng.choice(unique_users, size=len(unique_users), replace=True)
+        # Same RNG draw as before (values, not indices) for bit-for-bit parity with old code.
+        sampled_users = rep_rng.choice(unique_users_global, size=n_users_global, replace=True)
+        # One searchsorted per replicate (global, not per-fold).
+        sampled_idx_global = np.searchsorted(unique_users_global, sampled_users).astype(
+            np.int32, copy=False
+        )
+        counts_global = np.bincount(sampled_idx_global, minlength=n_users_global).astype(
+            np.int32, copy=False
+        )
         fold_aucs_replicate: list[float] = []
-        for y_sorted, s_sorted_fold, fold_row_to_user_idx, fold_unique in fold_sorted_data:
-            # Vectorized per-user multiplicity restricted to this fold's user set
-            sampled_idx_in_fold = np.searchsorted(fold_unique, sampled_users)
-            sampled_idx_clipped = np.clip(sampled_idx_in_fold, 0, len(fold_unique) - 1)
-            in_fold_mask = fold_unique[sampled_idx_clipped] == sampled_users
-            kept_idx = sampled_idx_in_fold[in_fold_mask]
-            user_multiplicity = np.bincount(kept_idx, minlength=len(fold_unique))
-            if user_multiplicity.sum() == 0:
+        for (
+            y_sorted,
+            s_sorted_fold,
+            fold_row_to_user_idx,
+            local_idx,
+            in_mask,
+            n_fold,
+        ) in fold_sorted_data:
+            # Scatter global counts into fold-local via precomputed mapping — no per-fold searchsorted.
+            counts_fold = np.bincount(
+                local_idx,
+                weights=counts_global[in_mask],
+                minlength=n_fold,
+            ).astype(np.int32, copy=False)
+            if counts_fold.sum() == 0:
                 continue
-            weights = user_multiplicity[fold_row_to_user_idx].astype(np.int64, copy=False)
+            weights = counts_fold[fold_row_to_user_idx].astype(np.int64, copy=False)
             auc_b = _weighted_rank_auc_numba(
                 y_sorted.astype(np.int64, copy=False),
                 s_sorted_fold.astype(np.float64, copy=False),
