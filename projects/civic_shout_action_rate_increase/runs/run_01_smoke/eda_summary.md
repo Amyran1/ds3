@@ -10,7 +10,7 @@
 | n_findings_error | 0 |
 | feature_feature_max_abs_pearson | 0.9147275734781335 |
 | cohort_drift_max_relative_lift | 1.668143163426224 |
-| elapsed_seconds | 28.14 |
+| elapsed_seconds | 26.28 |
 
 ## Method: outcome_distribution
 - elapsed: 0.04s
@@ -18,7 +18,7 @@
 ![outcome_distribution.png](outcome_distribution.png)
 
 ## Method: univariate_numeric
-- elapsed: 0.53s
+- elapsed: 0.52s
 - n_findings: 6
 ![univariate_numeric.png](univariate_numeric.png)
 
@@ -28,7 +28,7 @@
 ![univariate_categorical.png](univariate_categorical.png)
 
 ## Method: feature_outcome_correlation
-- elapsed: 22.72s
+- elapsed: 20.92s
 - n_findings: 6
 ![feature_outcome_correlation.png](feature_outcome_correlation.png)
 
@@ -38,12 +38,12 @@
 ![feature_feature_correlation.png](feature_feature_correlation.png)
 
 ## Method: missingness_pattern
-- elapsed: 4.61s
+- elapsed: 4.56s
 - n_findings: 0
 ![missingness_pattern.png](missingness_pattern.png)
 
 ## Method: row_alignment_audit
-- elapsed: 0.05s
+- elapsed: 0.04s
 - n_findings: 1
 
 ## Method: eda_cohort_baseline

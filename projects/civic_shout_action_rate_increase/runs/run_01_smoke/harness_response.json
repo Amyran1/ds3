@@ -597,32 +597,32 @@
     ]
   },
   "performance": {
-    "total_seconds": 548.6859055410023,
+    "total_seconds": 137.3033276249771,
     "stage_timings": [
       {
         "stage": "column_selection",
-        "seconds": 0.06638833304168656,
+        "seconds": 0.06686508399434388,
         "owner": "harness",
         "calls": 1,
         "notes": []
       },
       {
         "stage": "data_conversion",
-        "seconds": 35.141926165961195,
+        "seconds": 13.115732666978147,
         "owner": "harness",
         "calls": 1,
         "notes": []
       },
       {
         "stage": "split_generation",
-        "seconds": 0.05832687497604638,
+        "seconds": 0.04753833299037069,
         "owner": "harness",
         "calls": 8,
         "notes": []
       },
       {
         "stage": "fit",
-        "seconds": 7.852809499949217,
+        "seconds": 7.893925875017885,
         "owner": "model",
         "calls": 8,
         "notes": []
@@ -643,17 +643,17 @@
       },
       {
         "stage": "aggregate",
-        "seconds": 424.44589666603133,
+        "seconds": 33.26764566701604,
         "owner": "harness",
         "calls": 1,
         "notes": []
       }
     ],
     "bottleneck_stage": "aggregate",
-    "rows_per_second": 235.14181555800624,
-    "folds_per_second": 0.01458029068946473,
-    "harness_owned_seconds": 459.71253804001026,
-    "model_owned_seconds": 7.852809499949217,
+    "rows_per_second": 939.6640433391063,
+    "folds_per_second": 0.05826515743195072,
+    "harness_owned_seconds": 46.4977817509789,
+    "model_owned_seconds": 7.893925875017885,
     "peak_memory_mb": null,
     "parallelism": {
       "outer_n_jobs": 8,
@@ -672,9 +672,9 @@
     {
       "name": "confound_cache_hit",
       "severity": "info",
-      "message": "Confound scores computed and written to disk cache.",
+      "message": "Confound scores loaded from disk cache.",
       "values": {
-        "hit": false,
+        "hit": true,
         "fingerprint": "fbf900b8"
       }
     },
@@ -936,5 +936,6 @@
     },
     "data_fingerprint": null,
     "code_version": null
-  }
+  },
+  "fingerprint": "efa863f89dcef08d"
 }

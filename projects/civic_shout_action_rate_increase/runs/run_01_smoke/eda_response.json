@@ -286,39 +286,39 @@
     "top_finding_id": "outcome_distribution_positive_rate"
   },
   "performance": {
-    "total_seconds": 28.14484441705281,
+    "total_seconds": 26.277013540966436,
     "stage_timings": [
       {
         "stage": "outcome_distribution",
-        "seconds": 0.040505125012714416
+        "seconds": 0.03672587499022484
       },
       {
         "stage": "univariate_numeric",
-        "seconds": 0.5283562910044566
+        "seconds": 0.5175609170109965
       },
       {
         "stage": "univariate_categorical",
-        "seconds": 0.058716584055218846
+        "seconds": 0.05630145804025233
       },
       {
         "stage": "feature_outcome_correlation",
-        "seconds": 22.716045708977617
+        "seconds": 20.92494945798535
       },
       {
         "stage": "feature_feature_correlation",
-        "seconds": 0.09398166596656665
+        "seconds": 0.08847679197788239
       },
       {
         "stage": "missingness_pattern",
-        "seconds": 4.610164707992226
+        "seconds": 4.564424709009472
       },
       {
         "stage": "row_alignment_audit",
-        "seconds": 0.04554741602623835
+        "seconds": 0.03593495802488178
       },
       {
         "stage": "eda_cohort_baseline",
-        "seconds": 0.05136104195844382
+        "seconds": 0.05248316697543487
       }
     ]
   },
@@ -327,7 +327,7 @@
   "method_results": [
     {
       "name": "outcome_distribution",
-      "seconds": 0.040505125012714416,
+      "seconds": 0.03672587499022484,
       "n_findings": 2,
       "artifact_paths": [
         "runs/eda_scratch/artifacts/eda/outcome_distribution.png"
@@ -337,7 +337,7 @@
     },
     {
       "name": "univariate_numeric",
-      "seconds": 0.5283562910044566,
+      "seconds": 0.5175609170109965,
       "n_findings": 6,
       "artifact_paths": [
         "runs/eda_scratch/artifacts/eda/univariate_numeric.png"
@@ -347,7 +347,7 @@
     },
     {
       "name": "univariate_categorical",
-      "seconds": 0.058716584055218846,
+      "seconds": 0.05630145804025233,
       "n_findings": 2,
       "artifact_paths": [
         "runs/eda_scratch/artifacts/eda/univariate_categorical.png"
@@ -357,7 +357,7 @@
     },
     {
       "name": "feature_outcome_correlation",
-      "seconds": 22.716045708977617,
+      "seconds": 20.92494945798535,
       "n_findings": 6,
       "artifact_paths": [
         "runs/eda_scratch/artifacts/eda/feature_outcome_correlation.png"
@@ -367,7 +367,7 @@
     },
     {
       "name": "feature_feature_correlation",
-      "seconds": 0.09398166596656665,
+      "seconds": 0.08847679197788239,
       "n_findings": 2,
       "artifact_paths": [
         "runs/eda_scratch/artifacts/eda/feature_feature_correlation.png"
@@ -377,7 +377,7 @@
     },
     {
       "name": "missingness_pattern",
-      "seconds": 4.610164707992226,
+      "seconds": 4.564424709009472,
       "n_findings": 0,
       "artifact_paths": [
         "runs/eda_scratch/artifacts/eda/missingness_pattern.png"
@@ -387,7 +387,7 @@
     },
     {
       "name": "row_alignment_audit",
-      "seconds": 0.04554741602623835,
+      "seconds": 0.03593495802488178,
       "n_findings": 1,
       "artifact_paths": [],
       "skipped": false,
@@ -395,7 +395,7 @@
     },
     {
       "name": "eda_cohort_baseline",
-      "seconds": 0.05136104195844382,
+      "seconds": 0.05248316697543487,
       "n_findings": 3,
       "artifact_paths": [
         "runs/eda_scratch/artifacts/eda/eda_cohort_baseline.png"
