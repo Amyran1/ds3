@@ -5,7 +5,7 @@ from pathlib import Path
 
 import polars as pl
 
-_USER_EMAILS_VERSION = 3
+_USER_EMAILS_VERSION = 4
 
 
 def _find_project_root() -> Path:
@@ -18,13 +18,22 @@ def _blake2b_hex(text: str) -> str:
     return hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
 
 
+def _blake2b_bytes(data: bytes) -> str:
+    return hashlib.blake2b(data, digest_size=8).hexdigest()
+
+
 def data_fingerprint(df: pl.DataFrame) -> str:
     row_count = len(df)
     date_col = df["date_sent"]
     min_date = str(date_col.min())
     max_date = str(date_col.max())
     schema_key = ",".join(sorted(df.columns))
-    raw = f"v{_USER_EMAILS_VERSION}|{row_count}|{min_date}|{max_date}|{schema_key}"
+    outcome_sum = (
+        int(df["actioned_24h"].cast(pl.Int64).sum()) if "actioned_24h" in df.columns else 0
+    )
+    raw = (
+        f"v{_USER_EMAILS_VERSION}|{row_count}|{min_date}|{max_date}|{schema_key}|acts={outcome_sum}"
+    )
     return _blake2b_hex(raw)
 
 

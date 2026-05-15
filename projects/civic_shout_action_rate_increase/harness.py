@@ -451,18 +451,21 @@ def _compute_confound_scores_full_data(full_df: pl.DataFrame) -> pl.DataFrame:
 
     Returns df with columns (user_id, email_id, date_sent,
     user_prior_engagement_score, email_popularity_score).
-    """
-    sorted_df = full_df.sort(["user_id", "email_id", "date_sent"])
 
-    user_date_level = (
-        sorted_df.group_by(["user_id", "date_sent"])
+    Strict-prior semantics: group_by to (user/email, date_sent) collapses
+    same-day events to one row BEFORE cum_sum + shift(1), so the prior at
+    date t excludes all events on date t (not just row-order prior).
+    Two sub-plans collected in parallel via pl.collect_all (v3.6a).
+    """
+    user_date_lazy = (
+        full_df.lazy()
+        .group_by(["user_id", "date_sent"])
         .agg(pl.col("actioned_24h").cast(pl.Int32).sum().alias("_acts_on_date"))
-        .sort(["user_id", "date_sent"])
         .with_columns(
             pl.col("_acts_on_date")
             .cum_sum()
             .shift(1)
-            .over("user_id")
+            .over("user_id", order_by="date_sent")
             .fill_null(0)
             .alias("_prior_action_count")
         )
@@ -474,28 +477,24 @@ def _compute_confound_scores_full_data(full_df: pl.DataFrame) -> pl.DataFrame:
         .select(["user_id", "date_sent", "user_prior_engagement_score"])
     )
 
-    user_scores = sorted_df.join(user_date_level, on=["user_id", "date_sent"], how="left").select(
-        ["user_id", "email_id", "date_sent", "user_prior_engagement_score"]
-    )
-
-    email_date_level = (
-        sorted_df.group_by(["email_id", "date_sent"])
+    email_date_lazy = (
+        full_df.lazy()
+        .group_by(["email_id", "date_sent"])
         .agg(
             pl.len().cast(pl.Int64).alias("_sends_on_date"),
             pl.col("actioned_24h").cast(pl.Int32).sum().alias("_acts_on_date"),
         )
-        .sort(["email_id", "date_sent"])
         .with_columns(
             pl.col("_sends_on_date")
             .cum_sum()
             .shift(1)
-            .over("email_id")
+            .over("email_id", order_by="date_sent")
             .fill_null(0)
             .alias("_prior_sends"),
             pl.col("_acts_on_date")
             .cum_sum()
             .shift(1)
-            .over("email_id")
+            .over("email_id", order_by="date_sent")
             .fill_null(0)
             .alias("_prior_acts"),
         )
@@ -507,16 +506,35 @@ def _compute_confound_scores_full_data(full_df: pl.DataFrame) -> pl.DataFrame:
         .select(["email_id", "date_sent", "email_popularity_score"])
     )
 
-    email_scores = sorted_df.join(
-        email_date_level, on=["email_id", "date_sent"], how="left"
-    ).select(["user_id", "email_id", "date_sent", "email_popularity_score"])
-
-    joined = user_scores.join(email_scores, on=["user_id", "email_id", "date_sent"], how="inner")
-    if len(joined) != len(user_scores) or len(joined) != len(email_scores):
+    n_unique_keys = full_df.select(
+        pl.struct(["user_id", "email_id", "date_sent"]).n_unique()
+    ).item()
+    if n_unique_keys != len(full_df):
         raise ConfoundJoinError(
-            f"Confound join produced {len(joined)} rows but expected {len(user_scores)} "
-            f"(user_scores) == {len(email_scores)} (email_scores). "
-            "Duplicate (user_id, email_id, date_sent) keys detected."
+            f"Confound join aborted: {len(full_df) - n_unique_keys} duplicate "
+            "(user_id, email_id, date_sent) keys detected in full_df."
+        )
+
+    user_date_level, email_date_level = pl.collect_all([user_date_lazy, email_date_lazy])
+
+    joined = (
+        full_df.join(user_date_level, on=["user_id", "date_sent"], how="left")
+        .join(email_date_level, on=["email_id", "date_sent"], how="left")
+        .select(
+            [
+                "user_id",
+                "email_id",
+                "date_sent",
+                "user_prior_engagement_score",
+                "email_popularity_score",
+            ]
+        )
+    )
+
+    if len(joined) != len(full_df):
+        raise ConfoundJoinError(
+            f"Confound join produced {len(joined)} rows but expected {len(full_df)} "
+            f"(full_df). Row count mismatch after join."
         )
     return joined
 
