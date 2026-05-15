@@ -1322,7 +1322,7 @@ def _compute_confound_overlap_diagnostic(
 
 
 def _compute_cell_class_balance_diagnostic(
-    all_test_dfs: list[pl.DataFrame],
+    combined: pl.DataFrame,
     y_all: np.ndarray,
     tenure_all: np.ndarray,
     min_positives_threshold: int = 5,
@@ -1331,34 +1331,35 @@ def _compute_cell_class_balance_diagnostic(
 
     Returns the diagnostic and the set of excluded (tenure, prior_action_bin) cells.
     """
-    combined = pl.concat(all_test_dfs)
     prior_action_col = (
         combined["lifetime_actions_prior"] if "lifetime_actions_prior" in combined.columns else None
     )
 
-    prior_action_bins_labels = _PRIOR_ACTION_LABELS
-
-    def _bin_prior(val: int) -> str:
-        for i, bound in enumerate(_PRIOR_ACTION_BINS[1:]):
-            if val < bound:
-                return prior_action_bins_labels[i]
-        return prior_action_bins_labels[-1]
-
     if prior_action_col is not None:
-        prior_vals = prior_action_col.to_numpy()
-        prior_bin_arr = np.array([_bin_prior(int(v)) for v in prior_vals])
+        prior_vals = prior_action_col.to_numpy().astype(np.int64)
+        prior_bin_idx = np.searchsorted(_PRIOR_ACTION_BINS[1:], prior_vals, side="right")
+        prior_bin_arr = np.array(_PRIOR_ACTION_LABELS)[prior_bin_idx]
     else:
         prior_bin_arr = np.full(len(y_all), "0")
 
+    diag_df = pl.DataFrame(
+        {
+            "tenure": tenure_all,
+            "prior_action_bin": prior_bin_arr,
+            "y": y_all.astype(np.int64),
+        }
+    )
+    cell_counts_df = diag_df.group_by(["tenure", "prior_action_bin"]).agg(
+        pl.col("y").sum().alias("positives")
+    )
+    observed: dict[tuple[str, str], int] = {
+        (str(row["tenure"]), str(row["prior_action_bin"])): int(row["positives"])
+        for row in cell_counts_df.iter_rows(named=True)
+    }
     cell_positives: dict[tuple[str, str], int] = {}
     for t_label in _TENURE_LABELS:
-        for p_label in prior_action_bins_labels:
-            cell_positives[(t_label, p_label)] = 0
-
-    for i in range(len(y_all)):
-        key = (str(tenure_all[i]), str(prior_bin_arr[i]))
-        if key in cell_positives:
-            cell_positives[key] += int(y_all[i])
+        for p_label in _PRIOR_ACTION_LABELS:
+            cell_positives[(t_label, p_label)] = observed.get((t_label, p_label), 0)
 
     excluded: set[tuple[str, str]] = {
         k for k, v in cell_positives.items() if v < min_positives_threshold
@@ -2129,7 +2130,7 @@ def harness(
 
     # Cell-level class balance: per-(tenure_bucket, prior_action_bin) positive counts
     cell_balance_diag, excluded_cells = _compute_cell_class_balance_diagnostic(
-        all_test_dfs=[r["test_df"] for r in fold_results],
+        combined=all_test_dfs,
         y_all=y_all,
         tenure_all=tenure_all,
         min_positives_threshold=_class_balance_threshold,
