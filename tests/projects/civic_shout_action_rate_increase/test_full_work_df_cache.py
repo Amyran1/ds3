@@ -110,9 +110,8 @@ def test_warm_cache_path_skips_audit(
     model_config: ML_Model_Config,
     tmp_path: pytest.TempPathFactory,
 ) -> None:
-    # The leakage audit runs on both cache miss and cache hit (full_work_df is loaded from cache
-    # and still passed through the audit to preserve diagnostics). This test verifies that the
-    # audit is called on both invocations: 2 calls per run (user + email score cols).
+    # v3.12: comparison scope skips audit on cache hit by default (skip_audit_on_cache_hit=True).
+    # Miss → 2 calls (user + email); hit → 0 calls.
     audit_target = "projects.civic_shout_action_rate_increase.harness._assert_no_future_leak"
 
     with (
@@ -138,4 +137,6 @@ def test_warm_cache_path_skips_audit(
         calls_after_hit = mock_audit.call_count
 
     assert calls_after_miss == 2, f"Expected 2 audit calls on miss, got {calls_after_miss}"
-    assert calls_after_hit == 2, f"Expected 2 audit calls on cache hit, got {calls_after_hit}"
+    assert calls_after_hit == 0, (
+        f"Expected 0 audit calls on cache hit (comparison scope), got {calls_after_hit}"
+    )

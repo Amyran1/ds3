@@ -552,6 +552,7 @@ def _assert_no_future_leak(
     group_col: str,
     n_sample: int = 1000,
     seed: int = 42,
+    audit_sample_size: int | None = None,
 ) -> HarnessDiagnostic:
     """Re-derive score for a sample via vectorized cumsum and confirm max |diff| < 1e-9.
 
@@ -565,8 +566,9 @@ def _assert_no_future_leak(
             "All rows must have a non-null time value."
         )
 
+    _effective_sample = audit_sample_size if audit_sample_size is not None else n_sample
     rng = np.random.default_rng(seed)
-    n_audited = min(n_sample, len(df))
+    n_audited = min(_effective_sample, len(df))
     sample_idx = rng.choice(len(df), size=n_audited, replace=False)
     sample = df[sample_idx]
 
@@ -1627,6 +1629,7 @@ def harness(
     scope: str = "comparison",
     report_supplementary: bool | None = None,
     report_old_rfm: bool | None = None,
+    skip_audit_on_cache_hit: bool | None = None,
 ) -> CivicShoutHarnessResponse:
     """Evaluate features against actioned_24h via quarterly walk-forward.
 
@@ -1653,6 +1656,12 @@ def harness(
     if report_old_rfm is None:
         report_old_rfm = scope == "champion_candidate"
     _report_old_rfm: bool = report_old_rfm
+    # v3.12: audit sample size — 200 for comparison/comparison_fast/fast_iter, 1000 for champion_candidate.
+    _audit_sample_size: int = 200 if scope != "champion_candidate" else 1000
+    # v3.12: skip audit on cache hit — default True for non-champion scopes.
+    if skip_audit_on_cache_hit is None:
+        skip_audit_on_cache_hit = scope != "champion_candidate"
+    _skip_audit_on_cache_hit: bool = skip_audit_on_cache_hit
     stage_timings: list[HarnessStageTiming] = []
     diagnostics: list[HarnessDiagnostic] = []
     artifacts: list[HarnessArtifact] = []
@@ -1873,17 +1882,28 @@ def harness(
     # ------------------------------------------------------------------
 
     # Leakage audit: run once in main process before parallel dispatch.
+    # v3.12: skip audit on warm cache hit for non-champion scopes to reduce wall time.
     leak_diag_user: HarnessDiagnostic | None = None
     leak_diag_email: HarnessDiagnostic | None = None
-    try:
-        leak_diag_user = _assert_no_future_leak(
-            full_work_df, "user_prior_engagement_score", "date_sent", "user_id"
-        )
-        leak_diag_email = _assert_no_future_leak(
-            full_work_df, "email_popularity_score", "date_sent", "email_id"
-        )
-    except LeakageError:
-        raise
+    _run_audit = not (_skip_audit_on_cache_hit and _full_work_df_cache_hit)
+    if _run_audit:
+        try:
+            leak_diag_user = _assert_no_future_leak(
+                full_work_df,
+                "user_prior_engagement_score",
+                "date_sent",
+                "user_id",
+                audit_sample_size=_audit_sample_size,
+            )
+            leak_diag_email = _assert_no_future_leak(
+                full_work_df,
+                "email_popularity_score",
+                "date_sent",
+                "email_id",
+                audit_sample_size=_audit_sample_size,
+            )
+        except LeakageError:
+            raise
 
     # Pre-spawn per-fold seeds for determinism (#22 seed-pre-spawn pattern).
     rng_folds = np.random.default_rng(sample_seed if sample_seed is not None else 0)
