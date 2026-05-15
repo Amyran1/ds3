@@ -22,6 +22,7 @@ from projects.civic_shout_action_rate_increase.harness_cache import (
     HarnessCache,
     data_fingerprint,
     fold_train_fingerprint,
+    full_work_df_fingerprint,
 )
 
 # ---------------------------------------------------------------------------
@@ -1736,34 +1737,59 @@ def harness(
             )
         )
 
-    # Preserve the full frame for the leakage audit before sampling narrows it.
-    # The audit re-derives scores from strictly-prior rows; on a sample it would
-    # miss most prior history and produce false positives on high-volume users.
-    _confound_joined = work_df.join(
-        confound_df.select(
-            [
-                "user_id",
-                "email_id",
-                "date_sent",
-                "user_prior_engagement_score",
-                "email_popularity_score",
-            ]
-        ),
-        on=["user_id", "email_id", "date_sent"],
-        how="left",
-    )
-    _null_user = _confound_joined["user_prior_engagement_score"].is_null().sum()
-    _null_email = _confound_joined["email_popularity_score"].is_null().sum()
-    if _null_user > 0 or _null_email > 0:
-        raise ConfoundJoinError(
-            f"Confound left-join left {_null_user} null user_prior_engagement_score "
-            f"and {_null_email} null email_popularity_score rows. "
-            "Some work_df (user_id, email_id, date_sent) keys have no match in confound_df."
+    _full_work_fp = full_work_df_fingerprint(work_df, outcome_variable)
+    _cached_full_work_df = None if disable_cache else _harness_cache.get_full_work_df(_full_work_fp)
+    if _cached_full_work_df is not None:
+        full_work_df = _cached_full_work_df
+        _full_work_df_cache_hit = True
+        diagnostics.append(
+            HarnessDiagnostic(
+                name="full_work_df_cache_hit",
+                severity="info",
+                message="full_work_df loaded from disk cache (post-confound-join, pre-sample).",
+                values={"hit": True, "fingerprint": _full_work_fp[:8]},
+            )
         )
-    full_work_df = _confound_joined.with_columns(
-        pl.col("user_prior_engagement_score").fill_null(0.0),
-        pl.col("email_popularity_score").fill_null(0.5),
-    )
+    else:
+        # Preserve the full frame for the leakage audit before sampling narrows it.
+        # The audit re-derives scores from strictly-prior rows; on a sample it would
+        # miss most prior history and produce false positives on high-volume users.
+        _confound_joined = work_df.join(
+            confound_df.select(
+                [
+                    "user_id",
+                    "email_id",
+                    "date_sent",
+                    "user_prior_engagement_score",
+                    "email_popularity_score",
+                ]
+            ),
+            on=["user_id", "email_id", "date_sent"],
+            how="left",
+        )
+        _null_user = _confound_joined["user_prior_engagement_score"].is_null().sum()
+        _null_email = _confound_joined["email_popularity_score"].is_null().sum()
+        if _null_user > 0 or _null_email > 0:
+            raise ConfoundJoinError(
+                f"Confound left-join left {_null_user} null user_prior_engagement_score "
+                f"and {_null_email} null email_popularity_score rows. "
+                "Some work_df (user_id, email_id, date_sent) keys have no match in confound_df."
+            )
+        full_work_df = _confound_joined.with_columns(
+            pl.col("user_prior_engagement_score").fill_null(0.0),
+            pl.col("email_popularity_score").fill_null(0.5),
+        )
+        if not disable_cache:
+            _harness_cache.put_full_work_df(_full_work_fp, full_work_df)
+        _full_work_df_cache_hit = False
+        diagnostics.append(
+            HarnessDiagnostic(
+                name="full_work_df_cache_hit",
+                severity="info",
+                message="full_work_df built and written to disk cache.",
+                values={"hit": False, "fingerprint": _full_work_fp[:8]},
+            )
+        )
 
     if sample_frac is not None and sample_seed is not None:
         rng_sample = np.random.default_rng(sample_seed)
@@ -2277,7 +2303,7 @@ def harness(
 
     # T3b: cvAUC point estimate — comparison_fast only.
     # primary_value == mean(fold_aucs) by construction; cv_auc_pe should match to 1e-9.
-    _perf_metadata: dict[str, Any] = {}
+    _perf_metadata: dict[str, Any] = {"full_work_df_cache_hit": _full_work_df_cache_hit}
     if scope == "comparison_fast":
         cv_auc_pe = _cv_auc_point_estimate(fold_results)
         _perf_metadata["cv_auc_point_estimate"] = cv_auc_pe

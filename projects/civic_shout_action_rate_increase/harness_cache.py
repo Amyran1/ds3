@@ -6,6 +6,7 @@ from pathlib import Path
 import polars as pl
 
 _USER_EMAILS_VERSION = 4
+FULL_WORK_DF_CACHE_SCHEMA_VERSION = 1
 
 
 def _find_project_root() -> Path:
@@ -37,6 +38,26 @@ def data_fingerprint(df: pl.DataFrame) -> str:
     return _blake2b_hex(raw)
 
 
+def full_work_df_fingerprint(df: pl.DataFrame, outcome_variable: str) -> str:
+    row_count = len(df)
+    date_col = df["date_sent"]
+    min_date = str(date_col.min())
+    max_date = str(date_col.max())
+    schema_key = ",".join(f"{c}:{t}" for c, t in sorted(df.schema.items()))
+    outcome_sum = (
+        int(df["actioned_24h"].cast(pl.Int64).sum()) if "actioned_24h" in df.columns else 0
+    )
+    raw = (
+        f"fwdf_sv{FULL_WORK_DF_CACHE_SCHEMA_VERSION}"
+        f"|uev{_USER_EMAILS_VERSION}"
+        f"|{outcome_variable}"
+        f"|{row_count}|{min_date}|{max_date}"
+        f"|{schema_key}"
+        f"|acts={outcome_sum}"
+    )
+    return _blake2b_hex(raw)
+
+
 def fold_train_fingerprint(train_df: pl.DataFrame, fold_k: int, user_features: list[str]) -> str:
     base_fp = data_fingerprint(train_df)
     features_key = ",".join(sorted(user_features))
@@ -54,6 +75,10 @@ class HarnessCache:
             / "harness_cache"
         )
         self.root.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def base_path(self) -> Path:
+        return self.root
 
     def _confound_path(self, fingerprint: str) -> Path:
         return self.root / f"confound_scores_{fingerprint}.parquet"
@@ -83,4 +108,17 @@ class HarnessCache:
         self, fingerprint: str, fold_k: int, df: pl.DataFrame
     ) -> None:
         path = self._ume_path(fingerprint, fold_k)
+        df.write_parquet(path)
+
+    def get_full_work_df(self, fingerprint: str) -> pl.DataFrame | None:
+        """Load cached full_work_df (post-confound-join, pre-sample) for the given fingerprint.
+        Returns None on cache miss."""
+        path = self.root / f"full_work_df_{fingerprint}.parquet"
+        if not path.exists():
+            return None
+        return pl.read_parquet(path)
+
+    def put_full_work_df(self, fingerprint: str, df: pl.DataFrame) -> None:
+        """Persist full_work_df to cache."""
+        path = self.root / f"full_work_df_{fingerprint}.parquet"
         df.write_parquet(path)
