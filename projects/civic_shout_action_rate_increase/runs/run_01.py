@@ -76,12 +76,12 @@ _LR_ARGS = {
     "random_state": 42,
 }
 
-# LR uses fewer bootstrap resamples by default (100 vs LGBM's 500) because:
+# LR uses fewer bootstrap resamples by default (50 vs LGBM's 500) because:
 # 1. LR fit time is negligible; bootstrap CI is the dominant wall cost.
 # 2. LR's primary-lift confidence interval doesn't need 500-resample precision.
-# 3. MC std error inflates by sqrt(500/100) ≈ 2.24× — within tolerance for the primary lift question.
+# 3. MC std error inflates by sqrt(500/50) ≈ 3.16× — within tolerance for the directional lift question.
 # Override with --bootstrap-n-resamples N for tighter LR CIs (slower).
-_LR_DEFAULT_BOOTSTRAP_N = 100
+_LR_DEFAULT_BOOTSTRAP_N = 50
 
 
 def _git_sha() -> str:
@@ -108,6 +108,8 @@ def _build_harness_kwargs(
     bootstrap_n_resamples: int | None,
     model: str = "lgbm",
     lr_warm_start: bool = False,
+    lr_skip_audit: bool = False,
+    lr_fold_backend: str = "threads",
 ) -> dict:
     if model == "lr":
         ml_model_type = ML_Model_Type.LOGISTIC_REGRESSION
@@ -140,6 +142,10 @@ def _build_harness_kwargs(
     if lr_warm_start and model == "lr":
         kwargs["lr_warm_start"] = True
         kwargs["fold_n_jobs"] = 1
+    if lr_skip_audit and model == "lr":
+        kwargs["lr_skip_audit"] = True
+    if model == "lr" and lr_fold_backend == "processes":
+        kwargs["lr_fold_backend"] = "processes"
     return kwargs
 
 
@@ -192,6 +198,8 @@ def main(
     comparison_fast_first: bool = False,
     model: str = "lgbm",
     lr_warm_start: bool = False,
+    lr_skip_audit: bool = False,
+    lr_fold_backend: str = "threads",
 ) -> None:
     user_emails_df = user_emails_cache.get(3)
     features_df = recency_feature_cache.get(1)
@@ -230,6 +238,8 @@ def main(
         bootstrap_n_resamples,
         model,
         lr_warm_start=lr_warm_start,
+        lr_skip_audit=lr_skip_audit,
+        lr_fold_backend=lr_fold_backend,
     )
 
     response: object = None
@@ -307,6 +317,8 @@ def main(
             "comparison",
             bootstrap_n_resamples,
             model,
+            lr_skip_audit=lr_skip_audit,
+            lr_fold_backend=lr_fold_backend,
         )
         full_response = harness(**full_kwargs)
         _write_result(full_response, full_metadata, full_run_dir)
@@ -356,6 +368,8 @@ def main(
                 "comparison",
                 bootstrap_n_resamples,
                 model,
+                lr_skip_audit=lr_skip_audit,
+                lr_fold_backend=lr_fold_backend,
             )
             promoted_response = harness(**promoted_kwargs)
             _write_result(promoted_response, promoted_metadata, promoted_run_dir)
@@ -463,6 +477,29 @@ if __name__ == "__main__":
             "Off by default; folds remain parallel in the default path."
         ),
     )
+    parser.add_argument(
+        "--lr-skip-audit",
+        action="store_true",
+        default=False,
+        dest="lr_skip_audit",
+        help=(
+            "Skip _assert_no_future_leak audit entirely for LR runs. "
+            "Safe when LGBM ran first against the same data (audit is model-agnostic). "
+            "Off by default (audit runs per existing scope-based gating)."
+        ),
+    )
+    parser.add_argument(
+        "--lr-fold-backend",
+        choices=["threads", "processes"],
+        default="threads",
+        dest="lr_fold_backend",
+        help=(
+            "Joblib backend for LR fold parallelism. "
+            "'threads' (default): lower overhead, GIL may limit CPU for non-BLAS ops. "
+            "'processes' (loky): no GIL contention but incurs pickling overhead. "
+            "Run 1pct probe with both and pick the faster one."
+        ),
+    )
     args = parser.parse_args()
 
     if args.auto_promote and args.scope != "fast_iter":
@@ -481,4 +518,6 @@ if __name__ == "__main__":
         comparison_fast_first=args.comparison_fast_first,
         model=args.model,
         lr_warm_start=args.lr_warm_start,
+        lr_skip_audit=args.lr_skip_audit,
+        lr_fold_backend=args.lr_fold_backend,
     )

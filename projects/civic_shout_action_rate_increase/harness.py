@@ -1804,6 +1804,8 @@ def harness(
     report_old_rfm: bool | None = None,
     skip_audit_on_cache_hit: bool | None = None,
     lr_warm_start: bool = False,
+    lr_skip_audit: bool = False,
+    lr_fold_backend: str = "threads",
 ) -> CivicShoutHarnessResponse:
     """Evaluate features against actioned_24h via quarterly walk-forward.
 
@@ -2057,9 +2059,10 @@ def harness(
 
     # Leakage audit: run once in main process before parallel dispatch.
     # v3.12: skip audit on warm cache hit for non-champion scopes to reduce wall time.
+    # v4.3: lr_skip_audit=True bypasses audit entirely for LR runs against pre-verified data.
     leak_diag_user: HarnessDiagnostic | None = None
     leak_diag_email: HarnessDiagnostic | None = None
-    _run_audit = not (_skip_audit_on_cache_hit and _full_work_df_cache_hit)
+    _run_audit = not lr_skip_audit and not (_skip_audit_on_cache_hit and _full_work_df_cache_hit)
     if _run_audit:
         try:
             leak_diag_user = _assert_no_future_leak(
@@ -2142,8 +2145,13 @@ def harness(
             _ws_intercept = result.get("fitted_lr_intercept")
             raw_fold_results.append(result)
     else:
+        _fold_prefer = (
+            lr_fold_backend
+            if ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION
+            else "threads"
+        )
         raw_fold_results = Parallel(  # type: ignore[assignment]
-            n_jobs=_effective_fold_jobs, prefer="threads"
+            n_jobs=_effective_fold_jobs, prefer=_fold_prefer
         )(
             delayed(_run_one_fold)(
                 train_df,
