@@ -26,6 +26,7 @@ _SKLEARN_HAS_NEWTON_CHOLESKY = tuple(map(int, sklearn.__version__.split(".")[:2]
 from libs.perf_equivalence import compute_predictions_hash
 from projects.civic_shout_action_rate_increase.harness_cache import (
     HarnessCache,
+    confound_data_fingerprint,
     data_fingerprint,
     fold_train_fingerprint,
     full_work_df_fingerprint,
@@ -1896,7 +1897,7 @@ def harness(
     population_n_rows = len(work_df)
 
     _harness_cache = HarnessCache()
-    _confound_fp = data_fingerprint(work_df)
+    _confound_fp = confound_data_fingerprint(work_df)
 
     _cached_confound = None if disable_cache else _harness_cache.get_confound_scores(_confound_fp)
     if _cached_confound is not None:

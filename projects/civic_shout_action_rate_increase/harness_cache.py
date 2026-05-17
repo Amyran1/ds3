@@ -7,6 +7,7 @@ import polars as pl
 
 _USER_EMAILS_VERSION = 4
 FULL_WORK_DF_CACHE_SCHEMA_VERSION = 1
+_CONFOUND_CACHE_SCHEMA_VERSION = 1
 
 
 def _find_project_root() -> Path:
@@ -21,6 +22,25 @@ def _blake2b_hex(text: str) -> str:
 
 def _blake2b_bytes(data: bytes) -> str:
     return hashlib.blake2b(data, digest_size=8).hexdigest()
+
+
+def confound_data_fingerprint(df: pl.DataFrame) -> str:
+    """Fingerprint for confound score cache.
+
+    Depends ONLY on the columns that affect confound computation (user_id,
+    email_id, date_sent, actioned_24h). Does NOT include feature column names
+    or dtypes — confounds are invariant to which feature_cols are selected.
+    """
+    date_col = df.get_column("date_sent")
+    parts = [
+        f"v{_CONFOUND_CACHE_SCHEMA_VERSION}",
+        f"u{_USER_EMAILS_VERSION}",
+        f"n{df.height}",
+        f"mn{date_col.min()}",
+        f"mx{date_col.max()}",
+        f"os{int(df.get_column('actioned_24h').cast(pl.Int64).sum())}",
+    ]
+    return _blake2b_hex("|".join(parts))
 
 
 def data_fingerprint(df: pl.DataFrame) -> str:
