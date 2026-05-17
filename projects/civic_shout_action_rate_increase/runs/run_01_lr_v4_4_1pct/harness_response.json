@@ -1,0 +1,960 @@
+{
+  "summary": {
+    "primary_metric_name": "roc_auc_residualized_user_main_effect_x_email_popularity_pair",
+    "primary_metric_value": 0.5139234584332704,
+    "baseline_metric_value": 0.5,
+    "lift_vs_baseline": 0.013923458433270364,
+    "result_notes": [
+      "Quarterly walk-forward: 8 valid folds over 2024-Q3–2026-Q2.",
+      "Fold AUCs: [0.509, 0.5193, 0.5194, 0.523, 0.5011, 0.5204, 0.5207, 0.4984]",
+      "Old RFM-floor secondary: n/a (user_prior_x_email_popularity).",
+      "User main effect computed per-fold via LogisticRegression on train split (train/test separation guarantees no leak)."
+    ]
+  },
+  "method": {
+    "name": "quarterly_walk_forward_residualized_auc",
+    "metric_direction": "higher_is_better",
+    "n_splits": 8,
+    "split_strategy": "quarterly_cumulative_train_expanding",
+    "outcome_transform": null,
+    "outcome_inverse_transform": null
+  },
+  "data": {
+    "n_rows": 1290194,
+    "n_features": 8,
+    "feature_cols": [
+      "actioned_last_1",
+      "actioned_last_3",
+      "actioned_last_5",
+      "actioned_last_10",
+      "sends_since_last_action",
+      "action_in_last_5",
+      "is_in_action_streak",
+      "lifetime_actions_prior"
+    ],
+    "outcome_variable": "actioned_24h",
+    "train_rows": 5375641,
+    "validation_rows": 1191526,
+    "excluded_rows": 0,
+    "sample_frac": 0.01,
+    "sample_seed": 42,
+    "sample_strategy": "random_row_sample",
+    "is_full_run": false,
+    "population_n_rows": 129019490,
+    "column_mapping": {
+      "group": "user_id"
+    },
+    "notes": [
+      "Confound scores computed on full data before sampling."
+    ]
+  },
+  "metrics": {
+    "primary": {
+      "name": "roc_auc_residualized_user_main_effect_x_email_popularity_pair",
+      "value": 0.5139234584332704,
+      "split": null,
+      "fold": null,
+      "direction": "higher_is_better",
+      "std": 0.009709376950696817,
+      "ci_low": 0.5089738719830889,
+      "ci_high": 0.5133867799392348
+    },
+    "by_fold": [
+      {
+        "name": "roc_auc_residualized_user_main_effect_x_email_popularity_pair",
+        "value": 0.508975973220816,
+        "split": "2024-Q3",
+        "fold": 0,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": 0.5041937648268981,
+        "ci_high": 0.5128170882892478
+      },
+      {
+        "name": "roc_auc_residualized_user_main_effect_x_email_popularity_pair",
+        "value": 0.5193404781332551,
+        "split": "2024-Q4",
+        "fold": 1,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": 0.5159451390437723,
+        "ci_high": 0.5290692342341942
+      },
+      {
+        "name": "roc_auc_residualized_user_main_effect_x_email_popularity_pair",
+        "value": 0.5193745915182721,
+        "split": "2025-Q1",
+        "fold": 2,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": 0.5126076075753371,
+        "ci_high": 0.5224304934487596
+      },
+      {
+        "name": "roc_auc_residualized_user_main_effect_x_email_popularity_pair",
+        "value": 0.5230096637732689,
+        "split": "2025-Q2",
+        "fold": 3,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": 0.5083956256986314,
+        "ci_high": 0.5186902933008919
+      },
+      {
+        "name": "roc_auc_residualized_user_main_effect_x_email_popularity_pair",
+        "value": 0.5011081021126851,
+        "split": "2025-Q3",
+        "fold": 4,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": 0.49600650236721905,
+        "ci_high": 0.5051104214513528
+      },
+      {
+        "name": "roc_auc_residualized_user_main_effect_x_email_popularity_pair",
+        "value": 0.5204391131680436,
+        "split": "2025-Q4",
+        "fold": 5,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": 0.5068202257462691,
+        "ci_high": 0.5162029955965824
+      },
+      {
+        "name": "roc_auc_residualized_user_main_effect_x_email_popularity_pair",
+        "value": 0.5207326184703152,
+        "split": "2026-Q1",
+        "fold": 6,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": 0.5143179650401414,
+        "ci_high": 0.5224746455302653
+      },
+      {
+        "name": "roc_auc_residualized_user_main_effect_x_email_popularity_pair",
+        "value": 0.498407127069506,
+        "split": "2026-Q2",
+        "fold": 7,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": 0.4892102453246084,
+        "ci_high": 0.5097839259880522
+      }
+    ],
+    "secondary": [
+      {
+        "name": "roc_auc_raw_pair",
+        "value": 0.8767579320451551,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_confound_only_pair",
+        "value": 0.8292093285011999,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_user_main_effect_x_email_popularity_pair",
+        "value": 0.5139234584332704,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "pr_auc_residualized_user_prior_x_email_popularity_pair",
+        "value": 0.10418269687281448,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "primary_metric_temporal_cv",
+        "value": 0.017291572408180574,
+        "split": null,
+        "fold": null,
+        "direction": "lower_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "n_test_users",
+        "value": 451796.0,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "n_test_emails",
+        "value": 1894.0,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "n_test_rows",
+        "value": 1191526.0,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "pooled_positive_rate_train",
+        "value": 0.08410531878895931,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "pooled_positive_rate_test",
+        "value": 0.09467606991529465,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_non_streak_users_pair",
+        "value": 0.5153378879910196,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_cold_start_pair",
+        "value": 0.4464944678212951,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_0_7d_pair",
+        "value": 0.5336144895795587,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_8_30d_pair",
+        "value": 0.5332056574329465,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_31_90d_pair",
+        "value": 0.5231384897776049,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_91_180d_pair",
+        "value": 0.5057783688434649,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_181_365d_pair",
+        "value": 0.4837254061632196,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_1_2yr_pair",
+        "value": 0.4641662533982247,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2024-07",
+        "value": 0.504516547822065,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2024-08",
+        "value": 0.5076413979378506,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2024-09",
+        "value": 0.5135783188431715,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2024-10",
+        "value": 0.518842674786918,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2024-11",
+        "value": 0.512710491821714,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2024-12",
+        "value": 0.5363908882189424,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2025-01",
+        "value": 0.5125419681648321,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2025-02",
+        "value": 0.5165700666706466,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2025-03",
+        "value": 0.5212521054663662,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2025-04",
+        "value": 0.5133965961029592,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2025-05",
+        "value": 0.5161470018972173,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2025-06",
+        "value": 0.5114894092392164,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2025-07",
+        "value": 0.5013976305249142,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2025-08",
+        "value": 0.5058092884729299,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2025-09",
+        "value": 0.4950535006710095,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2025-10",
+        "value": 0.5196322894735094,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2025-11",
+        "value": 0.5051135008848466,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2025-12",
+        "value": 0.5080300038865289,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2026-01",
+        "value": 0.5218412646807109,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2026-02",
+        "value": 0.5203705468844719,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2026-03",
+        "value": 0.5140870011911374,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      {
+        "name": "roc_auc_residualized_pair_calendar_month_2026-04",
+        "value": 0.4994367164671689,
+        "split": null,
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      }
+    ],
+    "baseline": [
+      {
+        "name": "roc_auc_random",
+        "value": 0.5,
+        "split": "baseline",
+        "fold": null,
+        "direction": "higher_is_better",
+        "std": null,
+        "ci_low": null,
+        "ci_high": null
+      }
+    ]
+  },
+  "performance": {
+    "total_seconds": 12.194936332991347,
+    "stage_timings": [
+      {
+        "stage": "column_selection",
+        "seconds": 0.06110041600186378,
+        "owner": "harness",
+        "calls": 1,
+        "notes": []
+      },
+      {
+        "stage": "data_conversion",
+        "seconds": 6.3298550409963354,
+        "owner": "harness",
+        "calls": 1,
+        "notes": []
+      },
+      {
+        "stage": "split_generation",
+        "seconds": 0.13867516699247062,
+        "owner": "harness",
+        "calls": 8,
+        "notes": []
+      },
+      {
+        "stage": "fit",
+        "seconds": 1.0669918750645593,
+        "owner": "model",
+        "calls": 8,
+        "notes": []
+      },
+      {
+        "stage": "predict",
+        "seconds": 0.0,
+        "owner": "model",
+        "calls": 8,
+        "notes": []
+      },
+      {
+        "stage": "score",
+        "seconds": 0.0,
+        "owner": "harness",
+        "calls": 8,
+        "notes": []
+      },
+      {
+        "stage": "residualize_scores",
+        "seconds": 2.1188480840064585,
+        "owner": "harness",
+        "calls": 8,
+        "notes": []
+      },
+      {
+        "stage": "cross_fit_isotonic",
+        "seconds": 0.7382632059743628,
+        "owner": "harness",
+        "calls": 8,
+        "notes": []
+      },
+      {
+        "stage": "bootstrap_ci",
+        "seconds": 1.2485537099419162,
+        "owner": "harness",
+        "calls": 8,
+        "notes": []
+      },
+      {
+        "stage": "aggregate",
+        "seconds": 2.5438996250741184,
+        "owner": "harness",
+        "calls": 1,
+        "notes": []
+      },
+      {
+        "stage": "persist_predictions",
+        "seconds": 0.04355779197067022,
+        "owner": "harness",
+        "calls": 1,
+        "notes": []
+      }
+    ],
+    "bottleneck_stage": "data_conversion",
+    "rows_per_second": 105797.51831172725,
+    "folds_per_second": 0.656009984927707,
+    "harness_owned_seconds": 13.222753040958196,
+    "model_owned_seconds": 1.0669918750645593,
+    "peak_memory_mb": null,
+    "parallelism": {
+      "outer_n_jobs": 8,
+      "inner_threads": 3,
+      "backend": "threading",
+      "cpu_count_observed": 28,
+      "cpu_utilization_pct": 80.82,
+      "notes": []
+    },
+    "hardware": "local cpu",
+    "sample_size": 1290194,
+    "metadata": {
+      "full_work_df_cache_hit": true
+    },
+    "notes": []
+  },
+  "diagnostics": [
+    {
+      "name": "confound_cache_hit",
+      "severity": "info",
+      "message": "Confound scores loaded from disk cache.",
+      "values": {
+        "hit": true,
+        "fingerprint": "0792d0e2"
+      }
+    },
+    {
+      "name": "full_work_df_cache_hit",
+      "severity": "info",
+      "message": "full_work_df loaded from disk cache (post-confound-join, pre-sample).",
+      "values": {
+        "hit": true,
+        "fingerprint": "7598a0d6"
+      }
+    },
+    {
+      "name": "confound_overlap_2024-Q3",
+      "severity": "warning",
+      "message": "Fold 2024-Q3: 2/16 confound overlap cells have < 25 positives (min=9)",
+      "values": {
+        "fold": "2024-Q3",
+        "n_cells_below_threshold": 2,
+        "min_positives_per_cell": 9
+      }
+    },
+    {
+      "name": "confound_overlap_2024-Q4",
+      "severity": "info",
+      "message": "Fold 2024-Q4: 0/16 confound overlap cells have < 25 positives (min=47)",
+      "values": {
+        "fold": "2024-Q4",
+        "n_cells_below_threshold": 0,
+        "min_positives_per_cell": 47
+      }
+    },
+    {
+      "name": "confound_overlap_2025-Q1",
+      "severity": "info",
+      "message": "Fold 2025-Q1: 0/16 confound overlap cells have < 25 positives (min=46)",
+      "values": {
+        "fold": "2025-Q1",
+        "n_cells_below_threshold": 0,
+        "min_positives_per_cell": 46
+      }
+    },
+    {
+      "name": "confound_overlap_2025-Q2",
+      "severity": "info",
+      "message": "Fold 2025-Q2: 0/16 confound overlap cells have < 25 positives (min=52)",
+      "values": {
+        "fold": "2025-Q2",
+        "n_cells_below_threshold": 0,
+        "min_positives_per_cell": 52
+      }
+    },
+    {
+      "name": "confound_overlap_2025-Q3",
+      "severity": "info",
+      "message": "Fold 2025-Q3: 0/16 confound overlap cells have < 25 positives (min=47)",
+      "values": {
+        "fold": "2025-Q3",
+        "n_cells_below_threshold": 0,
+        "min_positives_per_cell": 47
+      }
+    },
+    {
+      "name": "confound_overlap_2025-Q4",
+      "severity": "info",
+      "message": "Fold 2025-Q4: 0/16 confound overlap cells have < 25 positives (min=34)",
+      "values": {
+        "fold": "2025-Q4",
+        "n_cells_below_threshold": 0,
+        "min_positives_per_cell": 34
+      }
+    },
+    {
+      "name": "confound_overlap_2026-Q1",
+      "severity": "info",
+      "message": "Fold 2026-Q1: 0/16 confound overlap cells have < 25 positives (min=43)",
+      "values": {
+        "fold": "2026-Q1",
+        "n_cells_below_threshold": 0,
+        "min_positives_per_cell": 43
+      }
+    },
+    {
+      "name": "confound_overlap_2026-Q2",
+      "severity": "warning",
+      "message": "Fold 2026-Q2: 5/16 confound overlap cells have < 25 positives (min=6)",
+      "values": {
+        "fold": "2026-Q2",
+        "n_cells_below_threshold": 5,
+        "min_positives_per_cell": 6
+      }
+    },
+    {
+      "name": "confound_overlap_min_across_folds",
+      "severity": "warning",
+      "message": "Confound overlap summary: min positives/cell across folds = 6, total cells below threshold = 7",
+      "values": {
+        "min_positives_per_cell": 6,
+        "n_cells_below_threshold": 7,
+        "threshold": 25
+      }
+    },
+    {
+      "name": "score_psi_train_test",
+      "severity": "info",
+      "message": "Score PSI between train and test: 0.0371",
+      "values": {
+        "psi": 0.03706541507796958
+      }
+    },
+    {
+      "name": "score_psi_by_tenure_bucket",
+      "severity": "warning",
+      "message": "Max per-tenure PSI: 0.1559",
+      "values": {
+        "max_psi": 0.15592403897525817
+      }
+    },
+    {
+      "name": "per_stratum_auc_dispersion",
+      "severity": "info",
+      "message": "CV of residualized AUC across tenure buckets: 0.0368",
+      "values": {
+        "cv": 0.03681240219211289
+      }
+    },
+    {
+      "name": "residual_collapse_check",
+      "severity": "info",
+      "message": "Residualized AUC above floor: 0.5139",
+      "values": {
+        "collapsed": false,
+        "value": 0.5139234584332704
+      }
+    },
+    {
+      "name": "confound_correlation_pearson",
+      "severity": "info",
+      "message": "Pearson r between user_prior and email_popularity scores: 0.3514",
+      "values": {
+        "pearson_r": 0.35141807645935025
+      }
+    },
+    {
+      "name": "temporal_drift_check",
+      "severity": "info",
+      "message": "Calendar-month AUC CV: 0.0173",
+      "values": {
+        "cv": 0.017291572408180574,
+        "n_months": 22
+      }
+    },
+    {
+      "name": "class_balance",
+      "severity": "error",
+      "message": "7/35 (tenure×prior_action) cells excluded (< 50 positives); min positives per cell = 0",
+      "values": {
+        "n_cells_excluded": 7,
+        "min_positives_per_cell": 0,
+        "excluded_cells": [
+          "1-2yr|0",
+          "1-2yr|1",
+          "2yr+|0",
+          "2yr+|1",
+          "2yr+|2-4",
+          "2yr+|20+",
+          "2yr+|5-19"
+        ]
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "predictions",
+      "kind": "predictions",
+      "uri": "/Users/aaronmyran/dev/ds3/projects/civic_shout_action_rate_increase/runs/run_01_lr_v4_4_1pct/artifacts/predictions.parquet",
+      "description": "Per-row predictions with score, residualized score, label, row_loss, and fold."
+    }
+  ],
+  "reproducibility": {
+    "seed": 42,
+    "ml_model_type": "logistic_regression",
+    "ml_model_args": {
+      "penalty": "l2",
+      "C": 1.0,
+      "max_iter": 200,
+      "tol": 0.001,
+      "fit_intercept": true,
+      "class_weight": null,
+      "random_state": 42,
+      "solver": "newton-cholesky"
+    },
+    "data_fingerprint": null,
+    "code_version": null
+  },
+  "model_interpretability": {
+    "model_type": "logistic_regression",
+    "penalty": "l2",
+    "C": 1.0,
+    "coefficients": [
+      {
+        "feature": "actioned_last_1",
+        "value": 0.013070133506873197,
+        "ci_low": null,
+        "ci_high": null,
+        "is_zero": false,
+        "rank_by_abs_value": 7
+      },
+      {
+        "feature": "actioned_last_3",
+        "value": 0.0971938954963448,
+        "ci_low": null,
+        "ci_high": null,
+        "is_zero": false,
+        "rank_by_abs_value": 5
+      },
+      {
+        "feature": "actioned_last_5",
+        "value": 0.01268536979533468,
+        "ci_low": null,
+        "ci_high": null,
+        "is_zero": false,
+        "rank_by_abs_value": 8
+      },
+      {
+        "feature": "actioned_last_10",
+        "value": 0.486193380114145,
+        "ci_low": null,
+        "ci_high": null,
+        "is_zero": false,
+        "rank_by_abs_value": 2
+      },
+      {
+        "feature": "sends_since_last_action",
+        "value": -1.0769872724772231,
+        "ci_low": null,
+        "ci_high": null,
+        "is_zero": false,
+        "rank_by_abs_value": 1
+      },
+      {
+        "feature": "action_in_last_5",
+        "value": 0.11590334712143532,
+        "ci_low": null,
+        "ci_high": null,
+        "is_zero": false,
+        "rank_by_abs_value": 4
+      },
+      {
+        "feature": "is_in_action_streak",
+        "value": -0.034909539991694064,
+        "ci_low": null,
+        "ci_high": null,
+        "is_zero": false,
+        "rank_by_abs_value": 6
+      },
+      {
+        "feature": "lifetime_actions_prior",
+        "value": 0.20891803470614784,
+        "ci_low": null,
+        "ci_high": null,
+        "is_zero": false,
+        "rank_by_abs_value": 3
+      }
+    ],
+    "intercept": -3.3266378145889384,
+    "intercept_ci_low": null,
+    "intercept_ci_high": null,
+    "n_features_nonzero": 8,
+    "sparsity": 0.0,
+    "feature_means": {
+      "actioned_last_1": 0.06694166295050066,
+      "actioned_last_3": 0.19217983540762962,
+      "actioned_last_5": 0.306614099809462,
+      "actioned_last_10": 0.5560668099079742,
+      "sends_since_last_action": 17.77416183565087,
+      "action_in_last_5": 0.17796043296712208,
+      "is_in_action_streak": 0.010317428142862935,
+      "lifetime_actions_prior": 2.099231767138282
+    },
+    "feature_stds": {
+      "actioned_last_1": 0.24992094092316922,
+      "actioned_last_3": 0.5319283065265,
+      "actioned_last_5": 0.7868654334938969,
+      "actioned_last_10": 1.3695962761405285,
+      "sends_since_last_action": 17.249848972644102,
+      "action_in_last_5": 0.38247943378079363,
+      "is_in_action_streak": 0.10104938802080789,
+      "lifetime_actions_prior": 4.661507610020666
+    }
+  },
+  "fingerprint": "7d85f8536f9c5f31"
+}
