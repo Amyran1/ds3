@@ -76,6 +76,13 @@ _LR_ARGS = {
     "random_state": 42,
 }
 
+# LR uses fewer bootstrap resamples by default (100 vs LGBM's 500) because:
+# 1. LR fit time is negligible; bootstrap CI is the dominant wall cost.
+# 2. LR's primary-lift confidence interval doesn't need 500-resample precision.
+# 3. MC std error inflates by sqrt(500/100) ≈ 2.24× — within tolerance for the primary lift question.
+# Override with --bootstrap-n-resamples N for tighter LR CIs (slower).
+_LR_DEFAULT_BOOTSTRAP_N = 100
+
 
 def _git_sha() -> str:
     try:
@@ -109,6 +116,11 @@ def _build_harness_kwargs(
         ml_model_type = ML_Model_Type.LIGHTGBM_CLASSIFIER
         model_args = _LGBM_ARGS
 
+    if model == "lr" and bootstrap_n_resamples is None:
+        resolved_bootstrap_n: int | None = _LR_DEFAULT_BOOTSTRAP_N
+    else:
+        resolved_bootstrap_n = bootstrap_n_resamples
+
     kwargs: dict = dict(
         data=joined,
         feature_cols=_FEATURE_COLS,
@@ -123,8 +135,8 @@ def _build_harness_kwargs(
         predictions_dir=str(artifacts_dir),
         scope=scope,
     )
-    if bootstrap_n_resamples is not None:
-        kwargs["bootstrap_n_resamples"] = bootstrap_n_resamples
+    if resolved_bootstrap_n is not None:
+        kwargs["bootstrap_n_resamples"] = resolved_bootstrap_n
     if lr_warm_start and model == "lr":
         kwargs["lr_warm_start"] = True
         kwargs["fold_n_jobs"] = 1
