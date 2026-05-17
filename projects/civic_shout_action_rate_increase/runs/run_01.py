@@ -76,12 +76,15 @@ _LR_ARGS = {
     "random_state": 42,
 }
 
-# LR uses fewer bootstrap resamples by default (50 vs LGBM's 500) because:
-# 1. LR fit time is negligible; bootstrap CI is the dominant wall cost.
-# 2. LR's primary-lift confidence interval doesn't need 500-resample precision.
-# 3. MC std error inflates by sqrt(500/50) ≈ 3.16× — within tolerance for the directional lift question.
-# Override with --bootstrap-n-resamples N for tighter LR CIs (slower).
-_LR_DEFAULT_BOOTSTRAP_N = 50
+# LR bootstrap defaults are scope-aware:
+#   comparison      B=30  — ~2× faster than LGBM on equivalent data; CI std error inflates
+#                           by sqrt(500/30)=4.1× vs LGBM. Acceptable for directional lift question.
+#   comparison_fast B=20  — 4 folds + tighter bootstrap; sub-10s target at 5% sample.
+#                           Std error inflates by sqrt(500/20)=5× — still directional.
+# For sub-10s LR use --scope comparison_fast (4 folds + B=20).
+# Override via --bootstrap-n-resamples N for tighter CIs (slower).
+_LR_DEFAULT_BOOTSTRAP_N_COMPARISON = 30
+_LR_DEFAULT_BOOTSTRAP_N_COMPARISON_FAST = 20
 
 
 def _git_sha() -> str:
@@ -119,7 +122,10 @@ def _build_harness_kwargs(
         model_args = _LGBM_ARGS
 
     if model == "lr" and bootstrap_n_resamples is None:
-        resolved_bootstrap_n: int | None = _LR_DEFAULT_BOOTSTRAP_N
+        if scope == "comparison_fast":
+            resolved_bootstrap_n: int | None = _LR_DEFAULT_BOOTSTRAP_N_COMPARISON_FAST
+        else:
+            resolved_bootstrap_n = _LR_DEFAULT_BOOTSTRAP_N_COMPARISON
     else:
         resolved_bootstrap_n = bootstrap_n_resamples
 
