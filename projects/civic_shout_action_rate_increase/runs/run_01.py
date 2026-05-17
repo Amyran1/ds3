@@ -113,6 +113,7 @@ def _build_harness_kwargs(
     lr_warm_start: bool = False,
     lr_skip_audit: bool = False,
     lr_fold_backend: str = "threads",
+    lr_skip_heavy_diagnostics: bool = False,
 ) -> dict:
     if model == "lr":
         ml_model_type = ML_Model_Type.LOGISTIC_REGRESSION
@@ -152,6 +153,8 @@ def _build_harness_kwargs(
         kwargs["lr_skip_audit"] = True
     if model == "lr" and lr_fold_backend == "processes":
         kwargs["lr_fold_backend"] = "processes"
+    if lr_skip_heavy_diagnostics and model == "lr":
+        kwargs["lr_skip_heavy_diagnostics"] = True
     return kwargs
 
 
@@ -206,6 +209,7 @@ def main(
     lr_warm_start: bool = False,
     lr_skip_audit: bool = False,
     lr_fold_backend: str = "threads",
+    lr_skip_heavy_diagnostics: bool = True,
 ) -> None:
     user_emails_df = user_emails_cache.get(3)
     features_df = recency_feature_cache.get(1)
@@ -246,6 +250,7 @@ def main(
         lr_warm_start=lr_warm_start,
         lr_skip_audit=lr_skip_audit,
         lr_fold_backend=lr_fold_backend,
+        lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
     )
 
     response: object = None
@@ -325,6 +330,7 @@ def main(
             model,
             lr_skip_audit=lr_skip_audit,
             lr_fold_backend=lr_fold_backend,
+            lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
         )
         full_response = harness(**full_kwargs)
         _write_result(full_response, full_metadata, full_run_dir)
@@ -376,6 +382,7 @@ def main(
                 model,
                 lr_skip_audit=lr_skip_audit,
                 lr_fold_backend=lr_fold_backend,
+                lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
             )
             promoted_response = harness(**promoted_kwargs)
             _write_result(promoted_response, promoted_metadata, promoted_run_dir)
@@ -506,6 +513,18 @@ if __name__ == "__main__":
             "Run 1pct probe with both and pick the faster one."
         ),
     )
+    parser.add_argument(
+        "--lr-skip-heavy-diagnostics",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        dest="lr_skip_heavy_diagnostics",
+        help=(
+            "Skip PSI, per-tenure PSI, cell balance, and confound overlap diagnostics for LR "
+            "runs in comparison/comparison_fast scopes (default: True). champion_candidate and "
+            "smoke always run full diagnostics regardless of this flag. "
+            "Use --no-lr-skip-heavy-diagnostics to re-enable."
+        ),
+    )
     args = parser.parse_args()
 
     if args.auto_promote and args.scope != "fast_iter":
@@ -526,4 +545,5 @@ if __name__ == "__main__":
         lr_warm_start=args.lr_warm_start,
         lr_skip_audit=args.lr_skip_audit,
         lr_fold_backend=args.lr_fold_backend,
+        lr_skip_heavy_diagnostics=args.lr_skip_heavy_diagnostics,
     )

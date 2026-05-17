@@ -1807,6 +1807,7 @@ def harness(
     lr_warm_start: bool = False,
     lr_skip_audit: bool = False,
     lr_fold_backend: str = "threads",
+    lr_skip_heavy_diagnostics: bool = False,
 ) -> CivicShoutHarnessResponse:
     """Evaluate features against actioned_24h via quarterly walk-forward.
 
@@ -1855,6 +1856,10 @@ def harness(
     _is_smoke = sample_frac is not None and sample_frac <= 0.01
     _confound_overlap_threshold = 25 if _is_smoke else 100
     _class_balance_threshold = 50 if _is_smoke else 5
+
+    # v5.3: skip heavy diagnostics (PSI, per-tenure PSI, cell balance) for non-decision scopes
+    # when lr_skip_heavy_diagnostics=True.  champion_candidate and smoke always run full diagnostics.
+    _skip_heavy_diags = lr_skip_heavy_diagnostics and scope not in {"champion_candidate", "smoke"}
 
     # ------------------------------------------------------------------
     # Stage 1: column_selection
@@ -2088,22 +2093,24 @@ def harness(
     n_folds = len(folds)
     fold_seeds = rng_folds.integers(0, 2**32 - 1, size=n_folds)
 
-    # CPU utilization measurement across the parallel fold batch.
+    # v5.2: CPU sampler is diagnostic-only; gate to champion_candidate to remove join() wall cost.
     import threading
 
     cpu_util_samples: list[float] = []
-    proc = psutil.Process()
+    _run_cpu_sampler = scope == "champion_candidate"
+    if _run_cpu_sampler:
+        proc = psutil.Process()
 
-    def _sample_cpu() -> None:
-        for _ in range(6):
-            time.sleep(1.0)
-            try:
-                cpu_util_samples.append(proc.cpu_percent(interval=None))
-            except Exception:
-                pass
+        def _sample_cpu() -> None:
+            for _ in range(6):
+                time.sleep(1.0)
+                try:
+                    cpu_util_samples.append(proc.cpu_percent(interval=None))
+                except Exception:
+                    pass
 
-    cpu_thread = threading.Thread(target=_sample_cpu, daemon=True)
-    cpu_thread.start()
+        cpu_thread = threading.Thread(target=_sample_cpu, daemon=True)
+        cpu_thread.start()
 
     t_fold_wall_start = time.perf_counter()
 
@@ -2175,7 +2182,8 @@ def harness(
         )
 
     t_fold_wall_total = time.perf_counter() - t_fold_wall_start
-    cpu_thread.join(timeout=2.0)
+    if _run_cpu_sampler:
+        cpu_thread.join(timeout=2.0)
 
     fold_results: list[dict[str, Any]] = raw_fold_results
     all_rows: list[pl.DataFrame] = [r["pred_rows"] for r in fold_results]
@@ -2416,28 +2424,35 @@ def harness(
         else 0.0
     )
 
-    # PSI: train vs test score distribution
-    psi_train_test = _compute_psi(s_train_all, s_all)
+    # v5.3: PSI + cell balance are heavy (per-bucket quantile/histogram work); skip for comparison scopes.
+    if not _skip_heavy_diags:
+        # PSI: train vs test score distribution
+        psi_train_test: float | None = _compute_psi(s_train_all, s_all)
 
-    # PSI by tenure bucket — hoist reference histogram once for all 7 buckets
-    _psi_ref_bins = np.linspace(0, 1, 11)
-    _psi_ref_bins[0], _psi_ref_bins[-1] = -np.inf, np.inf
-    _psi_ref_counts, _psi_ref_edges = np.histogram(s_all, bins=_psi_ref_bins)
-    tenure_psi_vals: list[float] = []
-    for label in _TENURE_LABELS:
-        mask = tenure_all == label
-        if mask.sum() >= 20:
-            psi = _psi_against_ref(s_all[mask], _psi_ref_counts, _psi_ref_edges)
-            tenure_psi_vals.append(psi)
-    max_tenure_psi = float(max(tenure_psi_vals)) if tenure_psi_vals else 0.0
+        # PSI by tenure bucket — hoist reference histogram once for all 7 buckets
+        _psi_ref_bins = np.linspace(0, 1, 11)
+        _psi_ref_bins[0], _psi_ref_bins[-1] = -np.inf, np.inf
+        _psi_ref_counts, _psi_ref_edges = np.histogram(s_all, bins=_psi_ref_bins)
+        tenure_psi_vals: list[float] = []
+        for label in _TENURE_LABELS:
+            mask = tenure_all == label
+            if mask.sum() >= 20:
+                psi = _psi_against_ref(s_all[mask], _psi_ref_counts, _psi_ref_edges)
+                tenure_psi_vals.append(psi)
+        max_tenure_psi: float | None = float(max(tenure_psi_vals)) if tenure_psi_vals else 0.0
 
-    # Cell-level class balance: per-(tenure_bucket, prior_action_bin) positive counts
-    cell_balance_diag, excluded_cells = _compute_cell_class_balance_diagnostic(
-        combined=all_test_dfs,
-        y_all=y_all,
-        tenure_all=tenure_all,
-        min_positives_threshold=_class_balance_threshold,
-    )
+        # Cell-level class balance: per-(tenure_bucket, prior_action_bin) positive counts
+        cell_balance_diag, excluded_cells = _compute_cell_class_balance_diagnostic(
+            combined=all_test_dfs,
+            y_all=y_all,
+            tenure_all=tenure_all,
+            min_positives_threshold=_class_balance_threshold,
+        )
+    else:
+        psi_train_test = None
+        max_tenure_psi = None
+        cell_balance_diag = None
+        excluded_cells = []
 
     # Per-stratum AUC CV — drop excluded (tenure, prior_action_bin) cells from CV
     stratum_auc_vals = [
@@ -2466,62 +2481,63 @@ def harness(
     n_test_emails = int(all_test_dfs["email_id"].n_unique())
     n_test_rows = len(y_all)
 
-    # Confound overlap summary across folds
-    fold_overlap_diags = [d for d in diagnostics if d.name.startswith("confound_overlap_")]
-    _overlap_min_positives = [
-        d.values.get("min_positives_per_cell", 0)
-        for d in fold_overlap_diags
-        if isinstance(d.values.get("min_positives_per_cell"), int)
-    ]
-    _overlap_min = min(_overlap_min_positives) if _overlap_min_positives else None
-    _overlap_n_cells_below = sum(
-        d.values.get("n_cells_below_threshold", 0)
-        for d in fold_overlap_diags
-        if isinstance(d.values.get("n_cells_below_threshold"), int)
-    )
-    _overlap_summary_sev: Literal["info", "warning"] = (
-        "warning" if any(d.severity == "warning" for d in fold_overlap_diags) else "info"
-    )
-    diagnostics.append(
-        HarnessDiagnostic(
-            name="confound_overlap_min_across_folds",
-            severity=_overlap_summary_sev,
-            message=(
-                f"Confound overlap summary: min positives/cell across folds = {_overlap_min}, "
-                f"total cells below threshold = {_overlap_n_cells_below}"
-            ),
-            values={
-                "min_positives_per_cell": _overlap_min,
-                "n_cells_below_threshold": _overlap_n_cells_below,
-                "threshold": _confound_overlap_threshold,
-            },
+    # Confound overlap summary + PSI diagnostics — gated behind _skip_heavy_diags.
+    if not _skip_heavy_diags:
+        fold_overlap_diags = [d for d in diagnostics if d.name.startswith("confound_overlap_")]
+        _overlap_min_positives = [
+            d.values.get("min_positives_per_cell", 0)
+            for d in fold_overlap_diags
+            if isinstance(d.values.get("min_positives_per_cell"), int)
+        ]
+        _overlap_min = min(_overlap_min_positives) if _overlap_min_positives else None
+        _overlap_n_cells_below = sum(
+            d.values.get("n_cells_below_threshold", 0)
+            for d in fold_overlap_diags
+            if isinstance(d.values.get("n_cells_below_threshold"), int)
         )
-    )
+        _overlap_summary_sev: Literal["info", "warning"] = (
+            "warning" if any(d.severity == "warning" for d in fold_overlap_diags) else "info"
+        )
+        diagnostics.append(
+            HarnessDiagnostic(
+                name="confound_overlap_min_across_folds",
+                severity=_overlap_summary_sev,
+                message=(
+                    f"Confound overlap summary: min positives/cell across folds = {_overlap_min}, "
+                    f"total cells below threshold = {_overlap_n_cells_below}"
+                ),
+                values={
+                    "min_positives_per_cell": _overlap_min,
+                    "n_cells_below_threshold": _overlap_n_cells_below,
+                    "threshold": _confound_overlap_threshold,
+                },
+            )
+        )
 
-    # Assemble diagnostics
-    psi_sev: Literal["info", "warning", "error"] = (
-        "error" if psi_train_test > 0.25 else "warning" if psi_train_test > 0.10 else "info"
-    )
-    diagnostics.append(
-        HarnessDiagnostic(
-            name="score_psi_train_test",
-            severity=psi_sev,
-            message=f"Score PSI between train and test: {psi_train_test:.4f}",
-            values={"psi": psi_train_test},
+        assert psi_train_test is not None and max_tenure_psi is not None
+        psi_sev: Literal["info", "warning", "error"] = (
+            "error" if psi_train_test > 0.25 else "warning" if psi_train_test > 0.10 else "info"
         )
-    )
+        diagnostics.append(
+            HarnessDiagnostic(
+                name="score_psi_train_test",
+                severity=psi_sev,
+                message=f"Score PSI between train and test: {psi_train_test:.4f}",
+                values={"psi": psi_train_test},
+            )
+        )
 
-    tenure_psi_sev: Literal["info", "warning", "error"] = (
-        "warning" if max_tenure_psi > 0.15 else "info"
-    )
-    diagnostics.append(
-        HarnessDiagnostic(
-            name="score_psi_by_tenure_bucket",
-            severity=tenure_psi_sev,
-            message=f"Max per-tenure PSI: {max_tenure_psi:.4f}",
-            values={"max_psi": max_tenure_psi},
+        tenure_psi_sev: Literal["info", "warning", "error"] = (
+            "warning" if max_tenure_psi > 0.15 else "info"
         )
-    )
+        diagnostics.append(
+            HarnessDiagnostic(
+                name="score_psi_by_tenure_bucket",
+                severity=tenure_psi_sev,
+                message=f"Max per-tenure PSI: {max_tenure_psi:.4f}",
+                values={"max_psi": max_tenure_psi},
+            )
+        )
 
     stratum_sev: Literal["info", "warning", "error"] = "warning" if stratum_cv > 0.5 else "info"
     diagnostics.append(
@@ -2565,7 +2581,8 @@ def harness(
         )
     )
 
-    diagnostics.append(cell_balance_diag)
+    if cell_balance_diag is not None:
+        diagnostics.append(cell_balance_diag)
 
     cpu_util = float(np.mean(cpu_util_samples)) if cpu_util_samples else None
     if cpu_util is not None and cpu_util < 50:
