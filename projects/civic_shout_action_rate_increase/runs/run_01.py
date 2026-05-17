@@ -66,6 +66,16 @@ _LGBM_ARGS = {
     "feature_pre_filter": True,
 }
 
+_LR_ARGS = {
+    "penalty": "l2",
+    "C": 1.0,
+    "max_iter": 200,
+    "tol": 1e-4,
+    "fit_intercept": True,
+    "class_weight": None,
+    "random_state": 42,
+}
+
 
 def _git_sha() -> str:
     try:
@@ -89,13 +99,21 @@ def _build_harness_kwargs(
     sample_seed: int,
     scope: str,
     bootstrap_n_resamples: int | None,
+    model: str = "lgbm",
 ) -> dict:
+    if model == "lr":
+        ml_model_type = ML_Model_Type.LOGISTIC_REGRESSION
+        model_args: dict = _LR_ARGS
+    else:
+        ml_model_type = ML_Model_Type.LIGHTGBM_CLASSIFIER
+        model_args = _LGBM_ARGS
+
     kwargs: dict = dict(
         data=joined,
         feature_cols=_FEATURE_COLS,
         ml_model_config=ML_Model_Config(
-            ml_model_type=ML_Model_Type.LIGHTGBM_CLASSIFIER,
-            args=_LGBM_ARGS,
+            ml_model_type=ml_model_type,
+            args=model_args,
             column_mapping={"group": "user_id"},
         ),
         outcome_variable="actioned_24h",
@@ -156,6 +174,7 @@ def main(
     bootstrap_n_resamples: int | None = None,
     auto_promote: bool = False,
     comparison_fast_first: bool = False,
+    model: str = "lgbm",
 ) -> None:
     user_emails_df = user_emails_cache.get(3)
     features_df = recency_feature_cache.get(1)
@@ -186,7 +205,7 @@ def main(
     )
 
     harness_kwargs = _build_harness_kwargs(
-        joined, artifacts_dir, sample_frac, sample_seed, scope, bootstrap_n_resamples
+        joined, artifacts_dir, sample_frac, sample_seed, scope, bootstrap_n_resamples, model
     )
 
     response: object = None
@@ -263,6 +282,7 @@ def main(
             sample_seed,
             "comparison",
             bootstrap_n_resamples,
+            model,
         )
         full_response = harness(**full_kwargs)
         _write_result(full_response, full_metadata, full_run_dir)
@@ -311,6 +331,7 @@ def main(
                 sample_seed,
                 "comparison",
                 bootstrap_n_resamples,
+                model,
             )
             promoted_response = harness(**promoted_kwargs)
             _write_result(promoted_response, promoted_metadata, promoted_run_dir)
@@ -400,6 +421,12 @@ if __name__ == "__main__":
             "scope=comparison with a separate run_id (<run_id>_comparison)."
         ),
     )
+    parser.add_argument(
+        "--model",
+        choices=["lgbm", "lr"],
+        default="lgbm",
+        help="Model type: lgbm (default, backward-compat) or lr (logistic regression).",
+    )
     args = parser.parse_args()
 
     if args.auto_promote and args.scope != "fast_iter":
@@ -416,4 +443,5 @@ if __name__ == "__main__":
         scope=args.scope,
         auto_promote=args.auto_promote,
         comparison_fast_first=args.comparison_fast_first,
+        model=args.model,
     )

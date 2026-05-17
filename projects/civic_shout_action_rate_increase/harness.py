@@ -15,7 +15,9 @@ from joblib import Parallel, delayed
 from lightgbm import LGBMClassifier
 from pydantic import BaseModel, ConfigDict, Field
 from sklearn.isotonic import IsotonicRegression
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, roc_auc_score
+from sklearn.preprocessing import StandardScaler
 
 from libs.perf_equivalence import compute_predictions_hash
 from projects.civic_shout_action_rate_increase.harness_cache import (
@@ -188,6 +190,7 @@ class HarnessReproducibility(BaseModel):
 
 class ML_Model_Type(Enum):
     LIGHTGBM_CLASSIFIER = "lightgbm_classifier"
+    LOGISTIC_REGRESSION = "logistic_regression"
 
 
 class ML_Model_Config(BaseModel):
@@ -248,6 +251,7 @@ class HarnessResponse(BaseModel):
     diagnostics: list[HarnessDiagnostic] = Field(default_factory=list)
     artifacts: list[HarnessArtifact] = Field(default_factory=list)
     reproducibility: HarnessReproducibility
+    model_interpretability: dict[str, Any] | None = None
     fingerprint: str = ""
 
     def to_result_row(self, run_metadata: RunResultMetadata) -> RunResultRow:
@@ -1443,6 +1447,72 @@ def _compute_user_main_effect_lgbm(
 
 
 # ---------------------------------------------------------------------------
+# Per-fold user main effect (LogisticRegression on user-side features only)
+# ---------------------------------------------------------------------------
+
+
+def _compute_user_main_effect_lr(
+    train_df: pl.DataFrame,
+    test_df: pl.DataFrame,
+    feature_cols: list[str],
+    ml_model_config: ML_Model_Config,
+    outcome_variable: str,
+    seed: int,
+    inner_threads: int,
+    fold_k: int = 0,
+    cache: HarnessCache | None = None,
+) -> np.ndarray:
+    _LGBM_ONLY_KEYS = {
+        "num_leaves",
+        "feature_fraction",
+        "bagging_fraction",
+        "bagging_freq",
+        "force_col_wise",
+        "feature_pre_filter",
+        "bin_construct_sample_cnt",
+        "verbose",
+    }
+    lr_args: dict[str, Any] = {
+        k: v for k, v in dict(ml_model_config.args).items() if k not in _LGBM_ONLY_KEYS
+    }
+    lr_args.setdefault("random_state", seed)
+    lr_args.setdefault("max_iter", 200)
+    lr_args.setdefault("tol", 1e-4)
+
+    penalty = lr_args.get("penalty", "l2")
+    if "solver" not in lr_args:
+        if penalty == "l2":
+            lr_args["solver"] = "newton-cholesky"
+        elif penalty == "l1":
+            lr_args["solver"] = "liblinear"
+        elif penalty == "elasticnet":
+            lr_args["solver"] = "saga"
+            lr_args.setdefault("l1_ratio", 0.5)
+
+    fp = fold_train_fingerprint(train_df, fold_k, feature_cols) + "_lr"
+    if cache is not None:
+        cached = cache.get_user_main_effect_predictions(fp, fold_k)
+        if cached is not None:
+            return cached["predictions"].to_numpy().astype(np.float64)
+
+    X_train = train_df.select(feature_cols).fill_null(0).to_numpy().astype(np.float64)
+    y_train = train_df.get_column(outcome_variable).to_numpy().astype(np.int32)
+    X_test = test_df.select(feature_cols).fill_null(0).to_numpy().astype(np.float64)
+
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+
+    model = LogisticRegression(**lr_args)
+    model.fit(X_train_scaled, y_train)
+    raw_test = model.decision_function(X_test_scaled).astype(np.float64)
+
+    if cache is not None:
+        cache.put_user_main_effect_predictions(fp, fold_k, pl.DataFrame({"predictions": raw_test}))
+    return raw_test
+
+
+# ---------------------------------------------------------------------------
 # Per-fold worker (pure function — safe for joblib loky dispatch)
 # ---------------------------------------------------------------------------
 
@@ -1465,11 +1535,6 @@ def _run_one_fold(
     report_old_rfm: bool = False,
 ) -> dict[str, Any]:
     """Execute one quarterly fold: fit → predict → residualize → score → bootstrap CI."""
-    lgbm_args = dict(ml_model_config.args)
-    lgbm_args["n_jobs"] = inner_threads
-    lgbm_args["random_state"] = seed
-    lgbm_args["verbose"] = -1
-
     X_train = train_df.select(feature_cols).fill_null(0).to_numpy()
     y_train = train_df[outcome_variable].to_numpy().astype(np.float32)
     X_test = test_df.select(feature_cols).fill_null(0).to_numpy()
@@ -1478,12 +1543,68 @@ def _run_one_fold(
     c_u_test = test_df["user_prior_engagement_score"].to_numpy()
     c_e_test = test_df["email_popularity_score"].to_numpy()
 
-    model = LGBMClassifier(**lgbm_args)
-    model.fit(X_train, y_train)
+    fold_lr_coefs: dict[str, float] | None = None
+    fold_lr_intercept: float | None = None
+    fold_lr_feature_means: list[float] | None = None
+    fold_lr_feature_stds: list[float] | None = None
 
-    # Single inference per split; derive proba once for PSI/row_loss path.
-    raw_test = model.predict(X_test, raw_score=True)
-    raw_train = model.predict(X_train, raw_score=True)
+    # === Dispatch on model type ===
+    if ml_model_config.ml_model_type == ML_Model_Type.LIGHTGBM_CLASSIFIER:
+        lgbm_args = dict(ml_model_config.args)
+        lgbm_args["n_jobs"] = inner_threads
+        lgbm_args["random_state"] = seed
+        lgbm_args["verbose"] = -1
+
+        model_lgbm = LGBMClassifier(**lgbm_args)
+        model_lgbm.fit(X_train, y_train)
+
+        # Single inference per split; derive proba once for PSI/row_loss path.
+        raw_test = model_lgbm.predict(X_test, raw_score=True)
+        raw_train = model_lgbm.predict(X_train, raw_score=True)
+
+    elif ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION:
+        _LGBM_ONLY_KEYS = {
+            "num_leaves",
+            "feature_fraction",
+            "bagging_fraction",
+            "bagging_freq",
+            "force_col_wise",
+            "feature_pre_filter",
+            "bin_construct_sample_cnt",
+            "verbose",
+        }
+        lr_args: dict[str, Any] = {
+            k: v for k, v in dict(ml_model_config.args).items() if k not in _LGBM_ONLY_KEYS
+        }
+        lr_args.setdefault("random_state", seed)
+        lr_args.setdefault("max_iter", 200)
+        lr_args.setdefault("tol", 1e-4)
+        penalty = lr_args.get("penalty", "l2")
+        if "solver" not in lr_args:
+            if penalty == "l2":
+                lr_args["solver"] = "newton-cholesky"
+            elif penalty == "l1":
+                lr_args["solver"] = "liblinear"
+            elif penalty == "elasticnet":
+                lr_args["solver"] = "saga"
+                lr_args.setdefault("l1_ratio", 0.5)
+
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train.astype(np.float64))
+        X_test_scaled = scaler.transform(X_test.astype(np.float64))
+
+        model_lr = LogisticRegression(**lr_args)
+        model_lr.fit(X_train_scaled, y_train)
+        raw_test = model_lr.decision_function(X_test_scaled).astype(np.float64)
+        raw_train = model_lr.decision_function(X_train_scaled).astype(np.float64)
+
+        fold_lr_coefs = dict(zip(feature_cols, model_lr.coef_[0].tolist()))
+        fold_lr_intercept = float(model_lr.intercept_[0])
+        fold_lr_feature_means = scaler.mean_.tolist()
+        fold_lr_feature_stds = scaler.scale_.tolist()
+
+    else:
+        raise ValueError(f"Unsupported ml_model_type: {ml_model_config.ml_model_type}")
 
     # AUC + residualization: rank-invariant under sigmoid — use raw scores.
     s_test = raw_test
@@ -1493,17 +1614,32 @@ def _run_one_fold(
     proba_test = 1.0 / (1.0 + np.exp(-raw_test))
     proba_train = 1.0 / (1.0 + np.exp(-raw_train))
 
-    c_u_main_effect_test = _compute_user_main_effect_lgbm(
-        train_df,
-        test_df,
-        feature_cols,
-        ml_model_config,
-        outcome_variable,
-        seed=seed,
-        inner_threads=inner_threads,
-        fold_k=fold_k,
-        cache=cache,
-    )
+    if ml_model_config.ml_model_type == ML_Model_Type.LIGHTGBM_CLASSIFIER:
+        c_u_main_effect_test = _compute_user_main_effect_lgbm(
+            train_df,
+            test_df,
+            feature_cols,
+            ml_model_config,
+            outcome_variable,
+            seed=seed,
+            inner_threads=inner_threads,
+            fold_k=fold_k,
+            cache=cache,
+        )
+    elif ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION:
+        c_u_main_effect_test = _compute_user_main_effect_lr(
+            train_df,
+            test_df,
+            feature_cols,
+            ml_model_config,
+            outcome_variable,
+            seed=seed,
+            inner_threads=inner_threads,
+            fold_k=fold_k,
+            cache=cache,
+        )
+    else:
+        raise ValueError(f"Unsupported ml_model_type: {ml_model_config.ml_model_type}")
 
     _t_resid = time.perf_counter()
     # T4.3: single-fit adds test-noise-leak risk; OK for directional fast-iter verdicts.
@@ -1605,6 +1741,10 @@ def _run_one_fold(
         "_resid_seconds": _resid_seconds,
         "_iso_fold_seconds": _iso_fold_seconds,
         "_boot_seconds": _boot_seconds,
+        "lr_coefs": fold_lr_coefs,
+        "lr_intercept": fold_lr_intercept,
+        "lr_feature_means": fold_lr_feature_means,
+        "lr_feature_stds": fold_lr_feature_stds,
     }
 
 
@@ -2015,6 +2155,42 @@ def harness(
     fold_aucs_old = [r["auc_residualized_old"] for r in fold_results]
     fold_labels = [r["q_label"] for r in fold_results]
     primary_value = float(np.mean(fold_aucs))
+
+    if ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION:
+        _lr_coef_dicts = [r["lr_coefs"] for r in fold_results if r["lr_coefs"] is not None]
+        _lr_intercepts = [r["lr_intercept"] for r in fold_results if r["lr_intercept"] is not None]
+        _feature_names = list(_lr_coef_dicts[0].keys()) if _lr_coef_dicts else list(feature_cols)
+        coefs_per_fold = np.array([[d[f] for f in _feature_names] for d in _lr_coef_dicts])
+        intercepts = np.array(_lr_intercepts)
+        _coef_entries = [
+            {
+                "feature": _feature_names[i],
+                "value": float(coefs_per_fold[:, i].mean()),
+                "ci_low": None,
+                "ci_high": None,
+                "is_zero": bool(abs(coefs_per_fold[:, i].mean()) < 1e-12),
+                "rank_by_abs_value": None,
+            }
+            for i in range(len(_feature_names))
+        ]
+        _ranked = sorted(_coef_entries, key=lambda c: abs(c["value"]), reverse=True)
+        for _rank, _coef in enumerate(_ranked, start=1):
+            _coef["rank_by_abs_value"] = _rank
+        model_interpretability: dict[str, Any] | None = {
+            "model_type": "logistic_regression",
+            "penalty": ml_model_config.args.get("penalty", "l2"),
+            "C": ml_model_config.args.get("C", 1.0),
+            "coefficients": _coef_entries,
+            "intercept": float(intercepts.mean()),
+            "intercept_ci_low": None,
+            "intercept_ci_high": None,
+            "n_features_nonzero": int((np.abs(coefs_per_fold.mean(axis=0)) > 1e-12).sum()),
+            "sparsity": float((np.abs(coefs_per_fold.mean(axis=0)) <= 1e-12).mean()),
+            "feature_means": dict(zip(_feature_names, fold_results[0]["lr_feature_means"] or [])),
+            "feature_stds": dict(zip(_feature_names, fold_results[0]["lr_feature_stds"] or [])),
+        }
+    else:
+        model_interpretability = None
     _old_rfm_fold_values = [v for v in fold_aucs_old if v is not None]
     old_primary_value: float | None = (
         float(np.mean(_old_rfm_fold_values)) if _old_rfm_fold_values else None
@@ -2528,7 +2704,7 @@ def harness(
                 f"Quarterly walk-forward: {len(fold_results)} valid folds over {fold_labels[0]}–{fold_labels[-1]}.",
                 f"Fold AUCs: {[round(a, 4) for a in fold_aucs]}",
                 f"Old RFM-floor secondary: {round(old_primary_value, 4) if old_primary_value is not None else 'n/a'} (user_prior_x_email_popularity).",
-                "User main effect computed per-fold via LightGBM on train split (train/test separation guarantees no leak).",
+                f"User main effect computed per-fold via {'LogisticRegression' if ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION else 'LightGBM'} on train split (train/test separation guarantees no leak).",
             ],
         ),
         method=HarnessMethod(
@@ -2598,6 +2774,7 @@ def harness(
             ml_model_args=ml_model_config.args,
             data_fingerprint=None,
         ),
+        model_interpretability=model_interpretability,
         fingerprint=_fingerprint,
     )
 
