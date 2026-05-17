@@ -994,15 +994,15 @@ def _user_block_bootstrap(
     child_seeds = rng.integers(0, 2**32 - 1, size=n_boot)
     uniform_pvals = np.full(n_users, 1.0 / n_users)
 
+    # Pre-cast once outside the replicate closure (Cv5.6).
+    y_sorted_i64 = y_sorted.astype(np.int64)
+    s_sorted_f64 = s_sorted.astype(np.float64)
+
     def _one_replicate(rep_seed: int) -> float:
         rep_rng = np.random.default_rng(rep_seed)
         user_multiplicity = rep_rng.multinomial(n_users, uniform_pvals).astype(np.int32, copy=False)
         weights = user_multiplicity[row_to_user_idx]
-        return _weighted_rank_auc_numba(
-            y_sorted.astype(np.int64, copy=False),
-            s_sorted.astype(np.float64, copy=False),
-            weights,
-        )
+        return _weighted_rank_auc_numba(y_sorted_i64, s_sorted_f64, weights)
 
     _resolved_jobs = bootstrap_n_jobs if bootstrap_n_jobs != -1 else n_jobs
     _effective_jobs = 1 if (_resolved_jobs == 1 or len(y) < 50_000) else _resolved_jobs
@@ -1065,6 +1065,21 @@ def _pooled_user_block_bootstrap_mean_of_folds(
     child_seeds = rng.integers(0, 2**32 - 1, size=n_boot)
     uniform_pvals_global = np.full(n_users_global, 1.0 / n_users_global)
 
+    # Pre-cast y/s arrays once per fold outside the replicate closure (Cv5.6).
+    fold_sorted_data_cast: list[
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]
+    ] = [
+        (
+            y_s.astype(np.int64),
+            s_s.astype(np.float64),
+            fold_row_to_user_idx,
+            local_idx,
+            in_mask,
+            n_fold,
+        )
+        for (y_s, s_s, fold_row_to_user_idx, local_idx, in_mask, n_fold) in fold_sorted_data
+    ]
+
     def _one_replicate(rep_seed: int) -> float:
         rep_rng = np.random.default_rng(rep_seed)
         counts_global = rep_rng.multinomial(n_users_global, uniform_pvals_global).astype(
@@ -1078,7 +1093,7 @@ def _pooled_user_block_bootstrap_mean_of_folds(
             local_idx,
             in_mask,
             n_fold,
-        ) in fold_sorted_data:
+        ) in fold_sorted_data_cast:
             # Scatter global counts into fold-local via precomputed mapping — no per-fold searchsorted.
             counts_fold = np.bincount(
                 local_idx,
@@ -1088,11 +1103,7 @@ def _pooled_user_block_bootstrap_mean_of_folds(
             if counts_fold.sum() == 0:
                 continue
             weights = counts_fold[fold_row_to_user_idx]
-            auc_b = _weighted_rank_auc_numba(
-                y_sorted.astype(np.int64, copy=False),
-                s_sorted_fold.astype(np.float64, copy=False),
-                weights,
-            )
+            auc_b = _weighted_rank_auc_numba(y_sorted, s_sorted_fold, weights)
             if not np.isnan(auc_b):
                 fold_aucs_replicate.append(auc_b)
         if not fold_aucs_replicate:
@@ -1126,7 +1137,11 @@ def _quarterly_folds(
     Quarter labels: "YYYY-QN" (e.g. "2024-Q2").
     First quarter (no prior history) is skipped.
     Cumulative-train: fold k trains on quarters [Q1..Q_{k-1}].
+
+    After sort(date_col), quarter labels are contiguous blocks — boundary
+    indices are computed once, then df.slice replaces per-fold boolean filters.
     """
+    df = df.sort(date_col)
     quarters = df.select(
         (
             pl.col(date_col).dt.year().cast(pl.Utf8)
@@ -1137,14 +1152,24 @@ def _quarterly_folds(
 
     quarter_labels: list[str] = sorted(set(quarters.to_list()))
 
+    # Compute boundary row indices for each quarter block (quarters are contiguous post-sort).
+    quarter_boundaries: list[int] = []
+    prev_q: str | None = None
+    q_list = quarters.to_list()
+    for i, q in enumerate(q_list):
+        if q != prev_q:
+            quarter_boundaries.append(i)
+            prev_q = q
+    quarter_boundaries.append(len(q_list))  # end sentinel
+
     folds = []
     for k, q_label in enumerate(quarter_labels):
         if k == 0:
             continue
-        train_mask = quarters.is_in(quarter_labels[:k])
-        test_mask = quarters == q_label
-        train_df = df.filter(train_mask)
-        test_df = df.filter(test_mask)
+        test_start = quarter_boundaries[k]
+        test_end = quarter_boundaries[k + 1]
+        test_df = df.slice(test_start, test_end - test_start)
+        train_df = df.slice(0, test_start)
         if len(train_df) == 0 or len(test_df) == 0:
             continue
         folds.append((q_label, train_df, test_df))

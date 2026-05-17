@@ -114,6 +114,7 @@ def _build_harness_kwargs(
     lr_skip_audit: bool = False,
     lr_fold_backend: str = "threads",
     lr_skip_heavy_diagnostics: bool = False,
+    write_predictions: bool = False,
 ) -> dict:
     if model == "lr":
         ml_model_type = ML_Model_Type.LOGISTIC_REGRESSION
@@ -130,6 +131,12 @@ def _build_harness_kwargs(
     else:
         resolved_bootstrap_n = bootstrap_n_resamples
 
+    # Cv5.4: LR comparison_fast is a pilot tier — predictions.parquet not needed
+    # for the decision-bearing flow. Skip by default; opt-in via --write-predictions.
+    # LR comparison scope keeps predictions (decision-bearing).
+    _skip_predictions = model == "lr" and scope == "comparison_fast" and not write_predictions
+    predictions_dir_val: str | None = None if _skip_predictions else str(artifacts_dir)
+
     kwargs: dict = dict(
         data=joined,
         feature_cols=_FEATURE_COLS,
@@ -141,7 +148,7 @@ def _build_harness_kwargs(
         outcome_variable="actioned_24h",
         sample_frac=sample_frac,
         sample_seed=sample_seed,
-        predictions_dir=str(artifacts_dir),
+        predictions_dir=predictions_dir_val,
         scope=scope,
     )
     if resolved_bootstrap_n is not None:
@@ -210,6 +217,7 @@ def main(
     lr_skip_audit: bool = False,
     lr_fold_backend: str = "threads",
     lr_skip_heavy_diagnostics: bool = True,
+    write_predictions: bool = False,
 ) -> None:
     user_emails_df = user_emails_cache.get(3)
     features_df = recency_feature_cache.get(1)
@@ -251,6 +259,7 @@ def main(
         lr_skip_audit=lr_skip_audit,
         lr_fold_backend=lr_fold_backend,
         lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
+        write_predictions=write_predictions,
     )
 
     response: object = None
@@ -525,6 +534,17 @@ if __name__ == "__main__":
             "Use --no-lr-skip-heavy-diagnostics to re-enable."
         ),
     )
+    parser.add_argument(
+        "--write-predictions",
+        action="store_true",
+        default=False,
+        dest="write_predictions",
+        help=(
+            "Force predictions.parquet write for LR comparison_fast runs. "
+            "By default, LR comparison_fast skips the predictions write (pilot tier; "
+            "not decision-bearing). LR comparison always writes predictions regardless."
+        ),
+    )
     args = parser.parse_args()
 
     if args.auto_promote and args.scope != "fast_iter":
@@ -546,4 +566,5 @@ if __name__ == "__main__":
         lr_skip_audit=args.lr_skip_audit,
         lr_fold_backend=args.lr_fold_backend,
         lr_skip_heavy_diagnostics=args.lr_skip_heavy_diagnostics,
+        write_predictions=args.write_predictions,
     )
