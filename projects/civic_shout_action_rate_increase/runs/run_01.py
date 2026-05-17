@@ -479,13 +479,13 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--lr-skip-audit",
-        action="store_true",
-        default=False,
+        action=argparse.BooleanOptionalAction,
+        default=True,
         dest="lr_skip_audit",
         help=(
-            "Skip _assert_no_future_leak audit entirely for LR runs. "
+            "Skip _assert_no_future_leak audit entirely for LR runs (default: True). "
             "Safe when LGBM ran first against the same data (audit is model-agnostic). "
-            "Off by default (audit runs per existing scope-based gating)."
+            "Use --no-lr-skip-audit to re-enable the audit."
         ),
     )
     parser.add_argument(
