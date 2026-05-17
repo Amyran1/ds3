@@ -1544,6 +1544,65 @@ def _compute_user_main_effect_lr(
 
 
 # ---------------------------------------------------------------------------
+# Cluster-robust sandwich variance for LR coefficient CIs (Codex Cv5.7)
+# ---------------------------------------------------------------------------
+
+
+def _compute_lr_sandwich_ci(
+    X_train_scaled: np.ndarray,
+    y_train: np.ndarray,
+    coef: np.ndarray,
+    intercept: np.ndarray,
+    user_ids_train: np.ndarray,
+    C: float = 1.0,
+    alpha: float = 0.05,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-fold cluster-robust sandwich variance for LR coefficient CIs.
+
+    H = X.T @ diag(p*(1-p)) @ X + (1/C) * I  (L2 Hessian at fitted beta)
+    Meat = sum_u (g_u g_u^T)  where g_u = sum_{i in u} (y_i - p_i) * x_i
+    V = H^-1 @ Meat @ H^-1  with small-sample correction m/(m-1), m = #users
+
+    Returns (ci_low, ci_high) arrays of shape (n_features,) using 1.96 Wald.
+    """
+    _, p = X_train_scaled.shape
+    logits = X_train_scaled @ coef[0] + intercept[0]
+    probs = 1.0 / (1.0 + np.exp(-logits))
+
+    # Hessian: X.T @ diag(p*(1-p)) @ X + lambda * I  where lambda = 1/C
+    w = probs * (1.0 - probs)
+    H = (X_train_scaled * w[:, None]).T @ X_train_scaled
+    lam = 1.0 / C
+    H += lam * np.eye(p)
+
+    try:
+        H_inv = np.linalg.inv(H)
+    except np.linalg.LinAlgError:
+        H_inv = np.linalg.pinv(H)
+
+    # Per-user score contributions: g_u = sum_{i in u} (y_i - p_i) * x_i
+    residuals = y_train.astype(np.float64) - probs
+    grad_rows = residuals[:, None] * X_train_scaled
+
+    unique_users, inverse_idx = np.unique(user_ids_train, return_inverse=True)
+    m = len(unique_users)
+    g_per_user = np.zeros((m, p), dtype=np.float64)
+    np.add.at(g_per_user, inverse_idx, grad_rows)
+    meat = g_per_user.T @ g_per_user
+
+    correction = m / (m - 1) if m > 1 else 1.0
+    V = correction * H_inv @ meat @ H_inv
+
+    se = np.sqrt(np.maximum(np.diag(V), 0.0))
+    from scipy.stats import norm as _norm
+
+    z = float(_norm.ppf(1.0 - alpha / 2))
+    ci_low = coef[0] - z * se
+    ci_high = coef[0] + z * se
+    return ci_low, ci_high
+
+
+# ---------------------------------------------------------------------------
 # Per-fold worker (pure function — safe for joblib loky dispatch)
 # ---------------------------------------------------------------------------
 
@@ -1582,6 +1641,9 @@ def _run_one_fold(
     fold_lr_feature_stds: list[float] | None = None
     _fitted_lr_coef: np.ndarray | None = None
     _fitted_lr_intercept: np.ndarray | None = None
+    fold_lr_coef_ci_low: dict[str, float] | None = None
+    fold_lr_coef_ci_high: dict[str, float] | None = None
+    fold_lgbm_feature_importance: dict[str, float] | None = None
 
     # === Dispatch on model type ===
     if ml_model_config.ml_model_type == ML_Model_Type.LIGHTGBM_CLASSIFIER:
@@ -1596,6 +1658,10 @@ def _run_one_fold(
         # Single inference per split; derive proba once for PSI/row_loss path.
         raw_test = model_lgbm.predict(X_test, raw_score=True)
         raw_train = model_lgbm.predict(X_train, raw_score=True)
+
+        fold_lgbm_feature_importance = dict(
+            zip(feature_cols, model_lgbm.feature_importances_.tolist())
+        )
 
     elif ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION:
         _LGBM_ONLY_KEYS = {
@@ -1659,6 +1725,19 @@ def _run_one_fold(
         fold_lr_feature_stds = scaler.scale_.tolist()
         _fitted_lr_coef = model_lr.coef_.copy()
         _fitted_lr_intercept = model_lr.intercept_.copy()
+
+        _C = float(lr_args.get("C", 1.0))
+        _user_ids_train = train_df["user_id"].to_numpy()
+        _ci_lo, _ci_hi = _compute_lr_sandwich_ci(
+            X_train_scaled,
+            y_train.astype(np.float64),
+            model_lr.coef_,
+            model_lr.intercept_,
+            _user_ids_train,
+            C=_C,
+        )
+        fold_lr_coef_ci_low = dict(zip(feature_cols, _ci_lo.tolist()))
+        fold_lr_coef_ci_high = dict(zip(feature_cols, _ci_hi.tolist()))
 
     else:
         raise ValueError(f"Unsupported ml_model_type: {ml_model_config.ml_model_type}")
@@ -1804,6 +1883,9 @@ def _run_one_fold(
         "lr_feature_stds": fold_lr_feature_stds,
         "fitted_lr_coef": _fitted_lr_coef,
         "fitted_lr_intercept": _fitted_lr_intercept,
+        "lr_coef_ci_low": fold_lr_coef_ci_low,
+        "lr_coef_ci_high": fold_lr_coef_ci_high,
+        "lgbm_feature_importance": fold_lgbm_feature_importance,
     }
 
 
@@ -2276,12 +2358,26 @@ def harness(
         _feature_names = list(_lr_coef_dicts[0].keys()) if _lr_coef_dicts else list(feature_cols)
         coefs_per_fold = np.array([[d[f] for f in _feature_names] for d in _lr_coef_dicts])
         intercepts = np.array(_lr_intercepts)
+
+        _ci_low_dicts = [
+            r["lr_coef_ci_low"] for r in fold_results if r.get("lr_coef_ci_low") is not None
+        ]
+        _ci_high_dicts = [
+            r["lr_coef_ci_high"] for r in fold_results if r.get("lr_coef_ci_high") is not None
+        ]
+        _have_ci = len(_ci_low_dicts) == len(_lr_coef_dicts) and len(_ci_low_dicts) > 0
+        if _have_ci:
+            ci_low_per_fold = np.array([[d[f] for f in _feature_names] for d in _ci_low_dicts])
+            ci_high_per_fold = np.array([[d[f] for f in _feature_names] for d in _ci_high_dicts])
+            _mean_ci_low = ci_low_per_fold.mean(axis=0)
+            _mean_ci_high = ci_high_per_fold.mean(axis=0)
+
         _coef_entries = [
             {
                 "feature": _feature_names[i],
                 "value": float(coefs_per_fold[:, i].mean()),
-                "ci_low": None,
-                "ci_high": None,
+                "ci_low": float(_mean_ci_low[i]) if _have_ci else None,
+                "ci_high": float(_mean_ci_high[i]) if _have_ci else None,
                 "is_zero": bool(abs(coefs_per_fold[:, i].mean()) < 1e-12),
                 "rank_by_abs_value": None,
             }
@@ -2303,6 +2399,39 @@ def harness(
             "feature_means": dict(zip(_feature_names, fold_results[0]["lr_feature_means"] or [])),
             "feature_stds": dict(zip(_feature_names, fold_results[0]["lr_feature_stds"] or [])),
         }
+    elif ml_model_config.ml_model_type == ML_Model_Type.LIGHTGBM_CLASSIFIER:
+        _lgbm_imp_dicts = [
+            r["lgbm_feature_importance"]
+            for r in fold_results
+            if r.get("lgbm_feature_importance") is not None
+        ]
+        if _lgbm_imp_dicts:
+            _lgbm_feature_names = list(_lgbm_imp_dicts[0].keys())
+            _imp_per_fold = np.array([[d[f] for f in _lgbm_feature_names] for d in _lgbm_imp_dicts])
+            _mean_imp = _imp_per_fold.mean(axis=0)
+            _total_imp = float(_mean_imp.sum())
+            _lgbm_imp_entries = [
+                {
+                    "feature": _lgbm_feature_names[i],
+                    "importance": float(_mean_imp[i]),
+                    "importance_normalized": float(_mean_imp[i] / _total_imp)
+                    if _total_imp > 0
+                    else 0.0,
+                    "rank": None,
+                }
+                for i in range(len(_lgbm_feature_names))
+            ]
+            _lgbm_ranked = sorted(_lgbm_imp_entries, key=lambda x: x["importance"], reverse=True)
+            for _r, _item in enumerate(_lgbm_ranked, start=1):
+                _item["rank"] = _r
+            model_interpretability = {
+                "model_type": "lightgbm_classifier",
+                "n_estimators": ml_model_config.args.get("n_estimators", 100),
+                "num_leaves": ml_model_config.args.get("num_leaves", 31),
+                "feature_importance_gain": _lgbm_imp_entries,
+            }
+        else:
+            model_interpretability = None
     else:
         model_interpretability = None
     _old_rfm_fold_values = [v for v in fold_aucs_old if v is not None]

@@ -84,7 +84,8 @@ def test_lgbm_unchanged_by_lr_addition() -> None:
         ml_model_config=_MODEL_CONFIG,
         scope="smoke",
     )
-    assert resp.model_interpretability is None
+    assert resp.model_interpretability is not None
+    assert resp.model_interpretability["model_type"] == "lightgbm_classifier"
     assert resp.summary.primary_metric_value > 0.50
 
 

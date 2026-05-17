@@ -156,16 +156,15 @@ def make_synthetic_user_emails(seed: int = 42) -> pl.DataFrame:
     return _build_sends(rng, n_users=2000, n_emails=40, include_recency=True)
 
 
-def make_synthetic_with_interaction(seed: int = 42) -> pl.DataFrame:
+def make_synthetic_with_interaction(seed: int = 42, n_users: int = 2000) -> pl.DataFrame:
     """Variant with a (user_id, email_id) pair random effect in the outcome logit.
 
     The pair effect N(0, 0.4) is NOT captured by user-only or email-only features,
     so the stricter user-main-effect residualized AUC will be > 0.50 (routing signal present).
     """
     rng = np.random.default_rng(seed)
-    base = _build_sends(rng, n_users=2000, n_emails=40, include_recency=True)
+    base = _build_sends(rng, n_users=n_users, n_emails=40, include_recency=True)
 
-    n_users = 2000
     n_emails = 40
     pair_effects = rng.normal(0.0, 0.4, size=(n_users, n_emails))
 
