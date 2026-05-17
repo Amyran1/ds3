@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import time
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
@@ -234,6 +235,28 @@ def _build_lr_args(base_args: dict[str, Any], seed: int | None = None) -> dict[s
             lr_args["solver"] = "saga"
             lr_args.setdefault("l1_ratio", 0.5)
     return lr_args
+
+
+@dataclass
+class FitFoldResult:
+    """Result of fitting a single fold's outer model. Both LGBM and LR fit helpers
+    return this structure so _run_one_fold can be model-agnostic downstream of the
+    fit step."""
+
+    raw_test: np.ndarray
+    raw_train: np.ndarray
+    proba_test: np.ndarray
+    proba_train: np.ndarray
+    lr_coefs: dict[str, float] | None = None
+    lr_intercept: float | None = None
+    lr_coef_ci_low: dict[str, float] | None = None
+    lr_coef_ci_high: dict[str, float] | None = None
+    lr_feature_means: list[float] | None = None
+    lr_feature_stds: list[float] | None = None
+    lr_fitted_coef: np.ndarray | None = None
+    lr_fitted_intercept: np.ndarray | None = None
+    lgbm_feature_importance: dict[str, float] | None = None
+    resolved_ml_args: dict[str, Any] = field(default_factory=dict)
 
 
 class ML_Model_Type(Enum):
@@ -1515,6 +1538,46 @@ def _compute_user_main_effect_lgbm(
 
 
 # ---------------------------------------------------------------------------
+# LGBM outer fold fit
+# ---------------------------------------------------------------------------
+
+
+def _fit_lgbm_fold(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
+    feature_cols: list[str],
+    ml_model_config: ML_Model_Config,
+    seed: int,
+    inner_threads: int,
+) -> FitFoldResult:
+    """Fit a LightGBM classifier for one fold; return raw + sigmoid scores plus feature importance."""
+    lgbm_args = dict(ml_model_config.args)
+    lgbm_args["n_jobs"] = inner_threads
+    lgbm_args["random_state"] = seed
+    lgbm_args["verbose"] = -1
+
+    model = LGBMClassifier(**lgbm_args)
+    model.fit(X_train, y_train)
+
+    raw_test = model.predict(X_test, raw_score=True)
+    raw_train = model.predict(X_train, raw_score=True)
+    proba_test = 1.0 / (1.0 + np.exp(-raw_test))
+    proba_train = 1.0 / (1.0 + np.exp(-raw_train))
+
+    lgbm_importance = dict(zip(feature_cols, model.feature_importances_.tolist()))
+
+    return FitFoldResult(
+        raw_test=raw_test,
+        raw_train=raw_train,
+        proba_test=proba_test,
+        proba_train=proba_train,
+        lgbm_feature_importance=lgbm_importance,
+        resolved_ml_args=lgbm_args,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Per-fold user main effect (LogisticRegression on user-side features only)
 # ---------------------------------------------------------------------------
 
@@ -1553,6 +1616,83 @@ def _compute_user_main_effect_lr(
     if cache is not None:
         cache.put_user_main_effect_predictions(fp, fold_k, pl.DataFrame({"predictions": raw_test}))
     return raw_test
+
+
+# ---------------------------------------------------------------------------
+# LR outer fold fit
+# ---------------------------------------------------------------------------
+
+
+def _fit_lr_fold(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
+    feature_cols: list[str],
+    ml_model_config: ML_Model_Config,
+    seed: int,
+    user_ids_train: np.ndarray | None = None,
+    warm_start_coef: np.ndarray | None = None,
+    warm_start_intercept: np.ndarray | None = None,
+) -> FitFoldResult:
+    """Fit a sklearn LogisticRegression for one fold; return raw + sigmoid scores plus coefficients with cluster-robust sandwich CIs."""
+    lr_args: dict[str, Any] = _build_lr_args(ml_model_config.args, seed=seed)
+
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train.astype(np.float64))
+    X_test_scaled = scaler.transform(X_test.astype(np.float64))
+
+    warm_start_supported = lr_args.get("solver") not in {"liblinear"}
+    if warm_start_coef is not None and warm_start_intercept is not None and warm_start_supported:
+        lr_args["warm_start"] = True
+
+    model = LogisticRegression(**lr_args)
+
+    if warm_start_coef is not None and warm_start_intercept is not None and warm_start_supported:
+        model.coef_ = warm_start_coef
+        model.intercept_ = warm_start_intercept
+        model.classes_ = np.array([0, 1])
+
+    model.fit(X_train_scaled, y_train)
+    raw_test = model.decision_function(X_test_scaled).astype(np.float64)
+    raw_train = model.decision_function(X_train_scaled).astype(np.float64)
+    proba_test = 1.0 / (1.0 + np.exp(-raw_test))
+    proba_train = 1.0 / (1.0 + np.exp(-raw_train))
+
+    lr_coefs = dict(zip(feature_cols, model.coef_[0].tolist()))
+    lr_intercept = float(model.intercept_[0])
+    lr_feature_means: list[float] = scaler.mean_.tolist()
+    lr_feature_stds: list[float] = scaler.scale_.tolist()
+
+    ci_lo: dict[str, float] | None = None
+    ci_hi: dict[str, float] | None = None
+    if user_ids_train is not None:
+        _C = float(lr_args.get("C", 1.0))
+        _ci_lo, _ci_hi = _compute_lr_sandwich_ci(
+            X_train_scaled,
+            y_train.astype(np.float64),
+            model.coef_,
+            model.intercept_,
+            user_ids_train,
+            C=_C,
+        )
+        ci_lo = dict(zip(feature_cols, _ci_lo.tolist()))
+        ci_hi = dict(zip(feature_cols, _ci_hi.tolist()))
+
+    return FitFoldResult(
+        raw_test=raw_test,
+        raw_train=raw_train,
+        proba_test=proba_test,
+        proba_train=proba_train,
+        lr_coefs=lr_coefs,
+        lr_intercept=lr_intercept,
+        lr_coef_ci_low=ci_lo,
+        lr_coef_ci_high=ci_hi,
+        lr_feature_means=lr_feature_means,
+        lr_feature_stds=lr_feature_stds,
+        lr_fitted_coef=model.coef_.copy(),
+        lr_fitted_intercept=model.intercept_.copy(),
+        resolved_ml_args=lr_args,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1647,125 +1787,49 @@ def _run_one_fold(
     c_u_test = test_df["user_prior_engagement_score"].to_numpy()
     c_e_test = test_df["email_popularity_score"].to_numpy()
 
-    fold_lr_coefs: dict[str, float] | None = None
-    fold_lr_intercept: float | None = None
-    fold_lr_feature_means: list[float] | None = None
-    fold_lr_feature_stds: list[float] | None = None
-    _fitted_lr_coef: np.ndarray | None = None
-    _fitted_lr_intercept: np.ndarray | None = None
-    fold_lr_coef_ci_low: dict[str, float] | None = None
-    fold_lr_coef_ci_high: dict[str, float] | None = None
-    fold_lgbm_feature_importance: dict[str, float] | None = None
-
-    # === Dispatch on model type ===
+    # ----- Dispatch fit -----
     if ml_model_config.ml_model_type == ML_Model_Type.LIGHTGBM_CLASSIFIER:
-        lgbm_args = dict(ml_model_config.args)
-        lgbm_args["n_jobs"] = inner_threads
-        lgbm_args["random_state"] = seed
-        lgbm_args["verbose"] = -1
-
-        model_lgbm = LGBMClassifier(**lgbm_args)
-        model_lgbm.fit(X_train, y_train)
-
-        # Single inference per split; derive proba once for PSI/row_loss path.
-        raw_test = model_lgbm.predict(X_test, raw_score=True)
-        raw_train = model_lgbm.predict(X_train, raw_score=True)
-
-        fold_lgbm_feature_importance = dict(
-            zip(feature_cols, model_lgbm.feature_importances_.tolist())
-        )
-
-    elif ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION:
-        lr_args: dict[str, Any] = _build_lr_args(ml_model_config.args, seed=seed)
-
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train.astype(np.float64))
-        X_test_scaled = scaler.transform(X_test.astype(np.float64))
-
-        # Warm-start: only for solvers that support it (liblinear does NOT).
-        warm_start_supported = lr_args.get("solver") not in {"liblinear"}
-        if (
-            warm_start_coef is not None
-            and warm_start_intercept is not None
-            and warm_start_supported
-        ):
-            lr_args["warm_start"] = True
-
-        model_lr = LogisticRegression(**lr_args)
-
-        if (
-            warm_start_coef is not None
-            and warm_start_intercept is not None
-            and warm_start_supported
-        ):
-            model_lr.coef_ = warm_start_coef
-            model_lr.intercept_ = warm_start_intercept
-            model_lr.classes_ = np.array([0, 1])
-
-        model_lr.fit(X_train_scaled, y_train)
-        raw_test = model_lr.decision_function(X_test_scaled).astype(np.float64)
-        raw_train = model_lr.decision_function(X_train_scaled).astype(np.float64)
-
-        fold_lr_coefs = dict(zip(feature_cols, model_lr.coef_[0].tolist()))
-        fold_lr_intercept = float(model_lr.intercept_[0])
-        fold_lr_feature_means = scaler.mean_.tolist()
-        fold_lr_feature_stds = scaler.scale_.tolist()
-        _fitted_lr_coef = model_lr.coef_.copy()
-        _fitted_lr_intercept = model_lr.intercept_.copy()
-
-        _C = float(lr_args.get("C", 1.0))
-        _user_ids_train = train_df["user_id"].to_numpy()
-        _ci_lo, _ci_hi = _compute_lr_sandwich_ci(
-            X_train_scaled,
-            y_train.astype(np.float64),
-            model_lr.coef_,
-            model_lr.intercept_,
-            _user_ids_train,
-            C=_C,
-        )
-        fold_lr_coef_ci_low = dict(zip(feature_cols, _ci_lo.tolist()))
-        fold_lr_coef_ci_high = dict(zip(feature_cols, _ci_hi.tolist()))
-
-    else:
-        raise ValueError(f"Unsupported ml_model_type: {ml_model_config.ml_model_type}")
-
-    # AUC + residualization: rank-invariant under sigmoid — use raw scores.
-    s_test = raw_test
-    s_train = raw_train
-
-    # Proba for consumers that require [0,1]: PSI bins and row_loss (cross-entropy).
-    proba_test = 1.0 / (1.0 + np.exp(-raw_test))
-    proba_train = 1.0 / (1.0 + np.exp(-raw_train))
-
-    if ml_model_config.ml_model_type == ML_Model_Type.LIGHTGBM_CLASSIFIER:
-        c_u_main_effect_test = _compute_user_main_effect_lgbm(
-            train_df,
-            test_df,
-            feature_cols,
-            ml_model_config,
-            outcome_variable,
-            seed=seed,
-            inner_threads=inner_threads,
-            fold_k=fold_k,
-            cache=cache,
+        fit_result = _fit_lgbm_fold(
+            X_train, y_train, X_test, feature_cols, ml_model_config, seed, inner_threads
         )
     elif ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION:
-        c_u_main_effect_test = _compute_user_main_effect_lr(
-            train_df,
-            test_df,
+        fit_result = _fit_lr_fold(
+            X_train,
+            y_train,
+            X_test,
             feature_cols,
             ml_model_config,
-            outcome_variable,
-            seed=seed,
-            inner_threads=inner_threads,
-            fold_k=fold_k,
-            cache=cache,
+            seed,
+            user_ids_train=train_df["user_id"].to_numpy(),
+            warm_start_coef=warm_start_coef,
+            warm_start_intercept=warm_start_intercept,
         )
     else:
         raise ValueError(f"Unsupported ml_model_type: {ml_model_config.ml_model_type}")
+    s_test, s_train = fit_result.raw_test, fit_result.raw_train
+    proba_test, proba_train = fit_result.proba_test, fit_result.proba_train
 
+    # ----- Dispatch UME -----
+    _ume_kw = dict(
+        train_df=train_df,
+        test_df=test_df,
+        feature_cols=feature_cols,
+        ml_model_config=ml_model_config,
+        outcome_variable=outcome_variable,
+        seed=seed,
+        inner_threads=inner_threads,
+        fold_k=fold_k,
+        cache=cache,
+    )
+    if ml_model_config.ml_model_type == ML_Model_Type.LIGHTGBM_CLASSIFIER:
+        c_u_main_effect_test = _compute_user_main_effect_lgbm(**_ume_kw)
+    elif ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION:
+        c_u_main_effect_test = _compute_user_main_effect_lr(**_ume_kw)
+    else:
+        raise ValueError(f"Unsupported ml_model_type: {ml_model_config.ml_model_type}")
+
+    # ----- Residualization -----
     _t_resid = time.perf_counter()
-    # single-fit adds test-noise-leak risk; OK for directional fast-iter verdicts.
     _resid_fn = (
         _compute_residualized_auc_single_fit
         if _is_fast_iter(scope)
@@ -1774,28 +1838,22 @@ def _run_one_fold(
     auc_residualized, auc_dir_a, auc_dir_b, s_resid_xfit, _iso_secs_primary = _resid_fn(
         y_test, s_test, c_u_main_effect_test, c_e_test, seed=seed
     )
-
     if report_old_rfm:
         auc_residualized_old, _, _, s_resid_old, _iso_secs_old = _resid_fn(
             y_test, s_test, c_u_test, c_e_test, seed=seed
         )
     else:
-        auc_residualized_old = None
-        s_resid_old = None
-        _iso_secs_old = 0.0
+        auc_residualized_old, s_resid_old, _iso_secs_old = None, None, 0.0
     _resid_seconds = time.perf_counter() - _t_resid
     _iso_fold_seconds = _iso_secs_primary + _iso_secs_old
 
+    # ----- Bootstrap CI -----
     user_ids_test = test_df["user_id"].to_numpy()
     unique_users_test = np.unique(user_ids_test)
-
-    # Precompute once per fold; reused by _user_block_bootstrap and stored for
-    # _pooled_user_block_bootstrap_mean_of_folds to avoid a duplicate call.
     _fold_sorted_user_map = _build_sorted_user_map(
         y_test, s_resid_xfit, user_ids_test, unique_users_test
     )
     y_sorted_fold, s_sorted_fold, row_to_user_idx_fold = _fold_sorted_user_map
-
     _t_boot = time.perf_counter()
     boot_aucs = _user_block_bootstrap(
         y_test,
@@ -1811,6 +1869,7 @@ def _run_one_fold(
     ci_low = float(np.nanquantile(boot_aucs, 0.025))
     ci_high = float(np.nanquantile(boot_aucs, 0.975))
 
+    # ----- Diagnostics + predictions -----
     fold_overlap_diag = _compute_confound_overlap_diagnostic(
         fold_label=q_label,
         c_u_test=c_u_main_effect_test,
@@ -1818,19 +1877,15 @@ def _run_one_fold(
         y_test=y_test,
         min_positives_threshold=confound_overlap_threshold,
     )
-
+    row_loss = -y_test * np.log(np.clip(proba_test, 1e-7, 1 - 1e-7)) - (1 - y_test) * np.log(
+        np.clip(1 - proba_test, 1e-7, 1 - 1e-7)
+    )
     pred_rows = test_df.with_columns(
         [
             pl.Series("score", proba_test),
             pl.Series("score_residualized", s_resid_xfit),
             pl.lit(q_label).alias("fold"),
-            pl.Series(
-                "row_loss",
-                (
-                    -y_test * np.log(np.clip(proba_test, 1e-7, 1 - 1e-7))
-                    - (1 - y_test) * np.log(np.clip(1 - proba_test, 1e-7, 1 - 1e-7))
-                ),
-            ),
+            pl.Series("row_loss", row_loss),
         ]
     )
 
@@ -1864,15 +1919,15 @@ def _run_one_fold(
         "_resid_seconds": _resid_seconds,
         "_iso_fold_seconds": _iso_fold_seconds,
         "_boot_seconds": _boot_seconds,
-        "lr_coefs": fold_lr_coefs,
-        "lr_intercept": fold_lr_intercept,
-        "lr_feature_means": fold_lr_feature_means,
-        "lr_feature_stds": fold_lr_feature_stds,
-        "fitted_lr_coef": _fitted_lr_coef,
-        "fitted_lr_intercept": _fitted_lr_intercept,
-        "lr_coef_ci_low": fold_lr_coef_ci_low,
-        "lr_coef_ci_high": fold_lr_coef_ci_high,
-        "lgbm_feature_importance": fold_lgbm_feature_importance,
+        "lr_coefs": fit_result.lr_coefs,
+        "lr_intercept": fit_result.lr_intercept,
+        "lr_feature_means": fit_result.lr_feature_means,
+        "lr_feature_stds": fit_result.lr_feature_stds,
+        "fitted_lr_coef": fit_result.lr_fitted_coef,
+        "fitted_lr_intercept": fit_result.lr_fitted_intercept,
+        "lr_coef_ci_low": fit_result.lr_coef_ci_low,
+        "lr_coef_ci_high": fit_result.lr_coef_ci_high,
+        "lgbm_feature_importance": fit_result.lgbm_feature_importance,
     }
 
 
