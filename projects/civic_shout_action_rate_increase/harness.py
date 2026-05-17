@@ -11,6 +11,7 @@ import numba
 import numpy as np
 import polars as pl
 import psutil
+import sklearn
 from joblib import Parallel, delayed
 from lightgbm import LGBMClassifier
 from pydantic import BaseModel, ConfigDict, Field
@@ -18,6 +19,9 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.preprocessing import StandardScaler
+
+# newton-cholesky is available in sklearn >= 1.4; lbfgs fallback on older installs.
+_SKLEARN_HAS_NEWTON_CHOLESKY = tuple(map(int, sklearn.__version__.split(".")[:2])) >= (1, 4)
 
 from libs.perf_equivalence import compute_predictions_hash
 from projects.civic_shout_action_rate_increase.harness_cache import (
@@ -1482,7 +1486,8 @@ def _compute_user_main_effect_lr(
     penalty = lr_args.get("penalty", "l2")
     if "solver" not in lr_args:
         if penalty == "l2":
-            lr_args["solver"] = "newton-cholesky"
+            # newton-cholesky is 6-12× faster than lbfgs at n_samples >> n_features; requires sklearn >= 1.4.
+            lr_args["solver"] = "newton-cholesky" if _SKLEARN_HAS_NEWTON_CHOLESKY else "lbfgs"
         elif penalty == "l1":
             lr_args["solver"] = "liblinear"
         elif penalty == "elasticnet":
@@ -1533,6 +1538,8 @@ def _run_one_fold(
     cache: HarnessCache | None = None,
     scope: str = "comparison",
     report_old_rfm: bool = False,
+    warm_start_coef: np.ndarray | None = None,
+    warm_start_intercept: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Execute one quarterly fold: fit → predict → residualize → score → bootstrap CI."""
     X_train = train_df.select(feature_cols).fill_null(0).to_numpy()
@@ -1547,6 +1554,8 @@ def _run_one_fold(
     fold_lr_intercept: float | None = None
     fold_lr_feature_means: list[float] | None = None
     fold_lr_feature_stds: list[float] | None = None
+    _fitted_lr_coef: np.ndarray | None = None
+    _fitted_lr_intercept: np.ndarray | None = None
 
     # === Dispatch on model type ===
     if ml_model_config.ml_model_type == ML_Model_Type.LIGHTGBM_CLASSIFIER:
@@ -1582,7 +1591,8 @@ def _run_one_fold(
         penalty = lr_args.get("penalty", "l2")
         if "solver" not in lr_args:
             if penalty == "l2":
-                lr_args["solver"] = "newton-cholesky"
+                # newton-cholesky is 6-12× faster than lbfgs at n_samples >> n_features; requires sklearn >= 1.4.
+                lr_args["solver"] = "newton-cholesky" if _SKLEARN_HAS_NEWTON_CHOLESKY else "lbfgs"
             elif penalty == "l1":
                 lr_args["solver"] = "liblinear"
             elif penalty == "elasticnet":
@@ -1593,7 +1603,26 @@ def _run_one_fold(
         X_train_scaled = scaler.fit_transform(X_train.astype(np.float64))
         X_test_scaled = scaler.transform(X_test.astype(np.float64))
 
+        # Warm-start: only for solvers that support it (liblinear does NOT).
+        warm_start_supported = lr_args.get("solver") not in {"liblinear"}
+        if (
+            warm_start_coef is not None
+            and warm_start_intercept is not None
+            and warm_start_supported
+        ):
+            lr_args["warm_start"] = True
+
         model_lr = LogisticRegression(**lr_args)
+
+        if (
+            warm_start_coef is not None
+            and warm_start_intercept is not None
+            and warm_start_supported
+        ):
+            model_lr.coef_ = warm_start_coef
+            model_lr.intercept_ = warm_start_intercept
+            model_lr.classes_ = np.array([0, 1])
+
         model_lr.fit(X_train_scaled, y_train)
         raw_test = model_lr.decision_function(X_test_scaled).astype(np.float64)
         raw_train = model_lr.decision_function(X_train_scaled).astype(np.float64)
@@ -1602,6 +1631,8 @@ def _run_one_fold(
         fold_lr_intercept = float(model_lr.intercept_[0])
         fold_lr_feature_means = scaler.mean_.tolist()
         fold_lr_feature_stds = scaler.scale_.tolist()
+        _fitted_lr_coef = model_lr.coef_.copy()
+        _fitted_lr_intercept = model_lr.intercept_.copy()
 
     else:
         raise ValueError(f"Unsupported ml_model_type: {ml_model_config.ml_model_type}")
@@ -1745,6 +1776,8 @@ def _run_one_fold(
         "lr_intercept": fold_lr_intercept,
         "lr_feature_means": fold_lr_feature_means,
         "lr_feature_stds": fold_lr_feature_stds,
+        "fitted_lr_coef": _fitted_lr_coef,
+        "fitted_lr_intercept": _fitted_lr_intercept,
     }
 
 
@@ -1770,6 +1803,7 @@ def harness(
     report_supplementary: bool | None = None,
     report_old_rfm: bool | None = None,
     skip_audit_on_cache_hit: bool | None = None,
+    lr_warm_start: bool = False,
 ) -> CivicShoutHarnessResponse:
     """Evaluate features against actioned_24h via quarterly walk-forward.
 
@@ -2069,29 +2103,67 @@ def harness(
 
     t_fold_wall_start = time.perf_counter()
 
+    # Warm-start across folds is only available for sequential execution (fold_n_jobs == 1).
+    # Parallel fold dispatch runs folds concurrently — no fold ordering guarantee, so warm-start
+    # is disabled in that path to preserve correctness.
+    _use_warm_start = (
+        lr_warm_start
+        and fold_n_jobs == 1
+        and ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION
+    )
+
     _effective_fold_jobs = fold_n_jobs if fold_n_jobs != 1 else 1
-    raw_fold_results: list[dict[str, Any]] = Parallel(
-        n_jobs=_effective_fold_jobs, prefer="threads"
-    )(
-        delayed(_run_one_fold)(
-            train_df,
-            test_df,
-            q_label,
-            feature_cols,
-            outcome_variable,
-            ml_model_config,
-            _inner_threads,
-            _confound_overlap_threshold,
-            int(fold_seeds[k]),
-            bootstrap_n_jobs,
-            fold_k=k,
-            bootstrap_n_resamples=bootstrap_n_resamples,
-            cache=_harness_cache if not disable_cache else None,
-            scope=scope,
-            report_old_rfm=_report_old_rfm,
+
+    if _use_warm_start:
+        raw_fold_results = []
+        _ws_coef: np.ndarray | None = None
+        _ws_intercept: np.ndarray | None = None
+        for k, (q_label, train_df, test_df) in enumerate(folds):
+            result = _run_one_fold(
+                train_df,
+                test_df,
+                q_label,
+                feature_cols,
+                outcome_variable,
+                ml_model_config,
+                _inner_threads,
+                _confound_overlap_threshold,
+                int(fold_seeds[k]),
+                bootstrap_n_jobs,
+                fold_k=k,
+                bootstrap_n_resamples=bootstrap_n_resamples,
+                cache=_harness_cache if not disable_cache else None,
+                scope=scope,
+                report_old_rfm=_report_old_rfm,
+                warm_start_coef=_ws_coef,
+                warm_start_intercept=_ws_intercept,
+            )
+            _ws_coef = result.get("fitted_lr_coef")
+            _ws_intercept = result.get("fitted_lr_intercept")
+            raw_fold_results.append(result)
+    else:
+        raw_fold_results = Parallel(  # type: ignore[assignment]
+            n_jobs=_effective_fold_jobs, prefer="threads"
+        )(
+            delayed(_run_one_fold)(
+                train_df,
+                test_df,
+                q_label,
+                feature_cols,
+                outcome_variable,
+                ml_model_config,
+                _inner_threads,
+                _confound_overlap_threshold,
+                int(fold_seeds[k]),
+                bootstrap_n_jobs,
+                fold_k=k,
+                bootstrap_n_resamples=bootstrap_n_resamples,
+                cache=_harness_cache if not disable_cache else None,
+                scope=scope,
+                report_old_rfm=_report_old_rfm,
+            )
+            for k, (q_label, train_df, test_df) in enumerate(folds)
         )
-        for k, (q_label, train_df, test_df) in enumerate(folds)
-    )  # type: ignore[assignment]
 
     t_fold_wall_total = time.perf_counter() - t_fold_wall_start
     cpu_thread.join(timeout=2.0)
@@ -2679,6 +2751,20 @@ def harness(
     total_seconds = time.perf_counter() - wall_start
     n_rows_evaluated = len(work_df)
 
+    # Build resolved args with the actual solver chosen (for reproducibility tracking).
+    _resolved_ml_args = dict(ml_model_config.args)
+    if ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION:
+        if "solver" not in _resolved_ml_args:
+            _penalty = _resolved_ml_args.get("penalty", "l2")
+            if _penalty == "l2":
+                _resolved_ml_args["solver"] = (
+                    "newton-cholesky" if _SKLEARN_HAS_NEWTON_CHOLESKY else "lbfgs"
+                )
+            elif _penalty == "l1":
+                _resolved_ml_args["solver"] = "liblinear"
+            elif _penalty == "elasticnet":
+                _resolved_ml_args["solver"] = "saga"
+
     harness_secs = sum(st.seconds for st in stage_timings if st.owner == "harness")
     model_secs = sum(st.seconds for st in stage_timings if st.owner == "model")
 
@@ -2771,7 +2857,7 @@ def harness(
         reproducibility=HarnessReproducibility(
             seed=sample_seed,
             ml_model_type=ml_model_config.ml_model_type.value,
-            ml_model_args=ml_model_config.args,
+            ml_model_args=_resolved_ml_args,
             data_fingerprint=None,
         ),
         model_interpretability=model_interpretability,

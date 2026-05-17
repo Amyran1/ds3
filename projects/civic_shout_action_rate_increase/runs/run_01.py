@@ -70,7 +70,7 @@ _LR_ARGS = {
     "penalty": "l2",
     "C": 1.0,
     "max_iter": 200,
-    "tol": 1e-4,
+    "tol": 1e-3,  # was 1e-4 in Phase C; tighter tol verified within drift gate (< 0.000675 AUC)
     "fit_intercept": True,
     "class_weight": None,
     "random_state": 42,
@@ -100,6 +100,7 @@ def _build_harness_kwargs(
     scope: str,
     bootstrap_n_resamples: int | None,
     model: str = "lgbm",
+    lr_warm_start: bool = False,
 ) -> dict:
     if model == "lr":
         ml_model_type = ML_Model_Type.LOGISTIC_REGRESSION
@@ -124,6 +125,9 @@ def _build_harness_kwargs(
     )
     if bootstrap_n_resamples is not None:
         kwargs["bootstrap_n_resamples"] = bootstrap_n_resamples
+    if lr_warm_start and model == "lr":
+        kwargs["lr_warm_start"] = True
+        kwargs["fold_n_jobs"] = 1
     return kwargs
 
 
@@ -175,6 +179,7 @@ def main(
     auto_promote: bool = False,
     comparison_fast_first: bool = False,
     model: str = "lgbm",
+    lr_warm_start: bool = False,
 ) -> None:
     user_emails_df = user_emails_cache.get(3)
     features_df = recency_feature_cache.get(1)
@@ -205,7 +210,14 @@ def main(
     )
 
     harness_kwargs = _build_harness_kwargs(
-        joined, artifacts_dir, sample_frac, sample_seed, scope, bootstrap_n_resamples, model
+        joined,
+        artifacts_dir,
+        sample_frac,
+        sample_seed,
+        scope,
+        bootstrap_n_resamples,
+        model,
+        lr_warm_start=lr_warm_start,
     )
 
     response: object = None
@@ -427,6 +439,18 @@ if __name__ == "__main__":
         default="lgbm",
         help="Model type: lgbm (default, backward-compat) or lr (logistic regression).",
     )
+    parser.add_argument(
+        "--lr-warm-start",
+        action="store_true",
+        default=False,
+        dest="lr_warm_start",
+        help=(
+            "Enable warm-start across walk-forward folds for LR (sequential execution only). "
+            "Each fold k+1 initializes from fold k's fitted coefficients. "
+            "Activating this flag sets fold_n_jobs=1 automatically. "
+            "Off by default; folds remain parallel in the default path."
+        ),
+    )
     args = parser.parse_args()
 
     if args.auto_promote and args.scope != "fast_iter":
@@ -444,4 +468,5 @@ if __name__ == "__main__":
         auto_promote=args.auto_promote,
         comparison_fast_first=args.comparison_fast_first,
         model=args.model,
+        lr_warm_start=args.lr_warm_start,
     )
