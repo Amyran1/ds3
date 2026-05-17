@@ -182,6 +182,7 @@ class HarnessArtifact(BaseModel):
     name: str = "predictions"
     kind: Literal["table", "plot", "model", "predictions", "report", "other"]
     uri: str
+    byte_size: int | None = None
     description: str | None = None
 
 
@@ -191,6 +192,48 @@ class HarnessReproducibility(BaseModel):
     ml_model_args: dict[str, Any]
     data_fingerprint: str | None = None
     code_version: str | None = None
+
+
+_LGBM_ONLY_ARGS: frozenset[str] = frozenset(
+    {
+        "num_leaves",
+        "feature_fraction",
+        "bagging_fraction",
+        "bagging_freq",
+        "force_col_wise",
+        "feature_pre_filter",
+        "bin_construct_sample_cnt",
+        "verbose",
+    }
+)
+"""Args accepted by LightGBM but not by sklearn.LogisticRegression.
+Used to strip args before forwarding LR-compatible kwargs."""
+
+
+def _build_lr_args(base_args: dict[str, Any], seed: int | None = None) -> dict[str, Any]:
+    """Strip LGBM-only kwargs and resolve solver-by-penalty defaults for sklearn.LogisticRegression.
+
+    Solver defaults:
+      L2 → newton-cholesky (sklearn ≥1.4; fallback lbfgs)
+      L1 → liblinear
+      Elastic Net → saga (with l1_ratio default 0.5 if absent)
+    """
+    lr_args = {k: v for k, v in dict(base_args).items() if k not in _LGBM_ONLY_ARGS}
+    if seed is not None:
+        lr_args.setdefault("random_state", seed)
+    lr_args.setdefault("max_iter", 200)
+    lr_args.setdefault("tol", 1e-3)
+    penalty = lr_args.get("penalty", "l2")
+    if "solver" not in lr_args:
+        if penalty == "l2":
+            # newton-cholesky is 6-12× faster than lbfgs at n_samples >> n_features; requires sklearn >= 1.4.
+            lr_args["solver"] = "newton-cholesky" if _SKLEARN_HAS_NEWTON_CHOLESKY else "lbfgs"
+        elif penalty == "l1":
+            lr_args["solver"] = "liblinear"
+        elif penalty == "elasticnet":
+            lr_args["solver"] = "saga"
+            lr_args.setdefault("l1_ratio", 0.5)
+    return lr_args
 
 
 class ML_Model_Type(Enum):
@@ -695,7 +738,7 @@ def _compute_residualized_auc_cross_fit(
 
         return rankdata(arr, method="average") / len(arr)
 
-    # T1.3: precompute confound ranks once per half (each set of 4 ranks is used twice
+    # Precompute confound ranks once per half (each set of 4 ranks is used twice
     # across the two _residualize_sequential calls — once as fit-side, once as apply-side).
     rank_u_a = _rank_normalize(c_u_a)
     rank_e_a = _rank_normalize(c_e_a)
@@ -1439,12 +1482,7 @@ def _compute_user_main_effect_lgbm(
     fold_k: int = 0,
     cache: HarnessCache | None = None,
 ) -> np.ndarray:
-    """Train a lightweight LightGBM on train_df and return test_df probabilities.
-
-    Uses n_estimators=100 (T2.3 reverted: 50-estimator predictions caused a primary-metric
-    drift of -0.029 on the 5% probe, well beyond the Codex drift gate). Cache bypass on
-    warm runs via T1.1. Train/test separation guarantees no future leak by construction.
-    """
+    """Train a lightweight LightGBM (n_estimators=100) on train_df and return test_df raw scores. Cache bypass on warm runs."""
     fingerprint: str | None = None
     if cache is not None:
         fingerprint = fold_train_fingerprint(train_df, fold_k=fold_k, user_features=feature_cols)
@@ -1492,33 +1530,7 @@ def _compute_user_main_effect_lr(
     fold_k: int = 0,
     cache: HarnessCache | None = None,
 ) -> np.ndarray:
-    _LGBM_ONLY_KEYS = {
-        "num_leaves",
-        "feature_fraction",
-        "bagging_fraction",
-        "bagging_freq",
-        "force_col_wise",
-        "feature_pre_filter",
-        "bin_construct_sample_cnt",
-        "verbose",
-    }
-    lr_args: dict[str, Any] = {
-        k: v for k, v in dict(ml_model_config.args).items() if k not in _LGBM_ONLY_KEYS
-    }
-    lr_args.setdefault("random_state", seed)
-    lr_args.setdefault("max_iter", 200)
-    lr_args.setdefault("tol", 1e-4)
-
-    penalty = lr_args.get("penalty", "l2")
-    if "solver" not in lr_args:
-        if penalty == "l2":
-            # newton-cholesky is 6-12× faster than lbfgs at n_samples >> n_features; requires sklearn >= 1.4.
-            lr_args["solver"] = "newton-cholesky" if _SKLEARN_HAS_NEWTON_CHOLESKY else "lbfgs"
-        elif penalty == "l1":
-            lr_args["solver"] = "liblinear"
-        elif penalty == "elasticnet":
-            lr_args["solver"] = "saga"
-            lr_args.setdefault("l1_ratio", 0.5)
+    lr_args = _build_lr_args(ml_model_config.args, seed=seed)
 
     fp = fold_train_fingerprint(train_df, fold_k, feature_cols) + "_lr"
     if cache is not None:
@@ -1664,32 +1676,7 @@ def _run_one_fold(
         )
 
     elif ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION:
-        _LGBM_ONLY_KEYS = {
-            "num_leaves",
-            "feature_fraction",
-            "bagging_fraction",
-            "bagging_freq",
-            "force_col_wise",
-            "feature_pre_filter",
-            "bin_construct_sample_cnt",
-            "verbose",
-        }
-        lr_args: dict[str, Any] = {
-            k: v for k, v in dict(ml_model_config.args).items() if k not in _LGBM_ONLY_KEYS
-        }
-        lr_args.setdefault("random_state", seed)
-        lr_args.setdefault("max_iter", 200)
-        lr_args.setdefault("tol", 1e-4)
-        penalty = lr_args.get("penalty", "l2")
-        if "solver" not in lr_args:
-            if penalty == "l2":
-                # newton-cholesky is 6-12× faster than lbfgs at n_samples >> n_features; requires sklearn >= 1.4.
-                lr_args["solver"] = "newton-cholesky" if _SKLEARN_HAS_NEWTON_CHOLESKY else "lbfgs"
-            elif penalty == "l1":
-                lr_args["solver"] = "liblinear"
-            elif penalty == "elasticnet":
-                lr_args["solver"] = "saga"
-                lr_args.setdefault("l1_ratio", 0.5)
+        lr_args: dict[str, Any] = _build_lr_args(ml_model_config.args, seed=seed)
 
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train.astype(np.float64))
@@ -1778,7 +1765,7 @@ def _run_one_fold(
         raise ValueError(f"Unsupported ml_model_type: {ml_model_config.ml_model_type}")
 
     _t_resid = time.perf_counter()
-    # T4.3: single-fit adds test-noise-leak risk; OK for directional fast-iter verdicts.
+    # single-fit adds test-noise-leak risk; OK for directional fast-iter verdicts.
     _resid_fn = (
         _compute_residualized_auc_single_fit
         if _is_fast_iter(scope)
@@ -1927,23 +1914,23 @@ def harness(
     directional only), comparison_fast (4-fold, 100 resamples, pilot-only — not decision-bearing).
     """
     wall_start = time.perf_counter()
-    # T4.4: default resamples adapts to scope; callers can always override explicitly.
+    # default resamples adapts to scope; callers can always override explicitly.
     if bootstrap_n_resamples is None:
         bootstrap_n_resamples = 100 if _is_fast_iter(scope) else 500
-    # T3.2: supplementary single-confound residualizations are expensive (16 isotonic fits).
+    # supplementary single-confound residualizations are expensive (16 isotonic fits).
     # fast_iter and comparison_fast always skip; champion_candidate always runs; comparison defaults off.
     if _is_fast_iter(scope):
         report_supplementary = False
     elif report_supplementary is None:
         report_supplementary = scope == "champion_candidate"
-    # T2a: old-RFM secondary residualization gated per scope.
+    # old-RFM secondary residualization gated per scope.
     # champion_candidate defaults on; comparison + comparison_fast default off.
     if report_old_rfm is None:
         report_old_rfm = scope == "champion_candidate"
     _report_old_rfm: bool = report_old_rfm
-    # v3.12: audit sample size — 200 for comparison/comparison_fast/fast_iter, 1000 for champion_candidate.
+    # audit sample size — 200 for comparison/comparison_fast/fast_iter, 1000 for champion_candidate.
     _audit_sample_size: int = 200 if scope != "champion_candidate" else 1000
-    # v3.12: skip audit on cache hit — default True for non-champion scopes.
+    # skip audit on cache hit — default True for non-champion scopes.
     if skip_audit_on_cache_hit is None:
         skip_audit_on_cache_hit = scope != "champion_candidate"
     _skip_audit_on_cache_hit: bool = skip_audit_on_cache_hit
@@ -1964,7 +1951,7 @@ def harness(
     _confound_overlap_threshold = 25 if _is_smoke else 100
     _class_balance_threshold = 50 if _is_smoke else 5
 
-    # v5.3: skip heavy diagnostics (PSI, per-tenure PSI, cell balance) for non-decision scopes
+    # skip heavy diagnostics (PSI, per-tenure PSI, cell balance) for non-decision scopes
     # when lr_skip_heavy_diagnostics=True.  champion_candidate and smoke always run full diagnostics.
     _skip_heavy_diags = lr_skip_heavy_diagnostics and scope not in {"champion_candidate", "smoke"}
 
@@ -2140,7 +2127,7 @@ def harness(
         indices = [round(i * step) for i in range(4)]
         folds = [folds[i] for i in indices]
     elif scope == "fast_iter" and len(folds) > 3:
-        # T4.2: subsample to 3 folds (first/middle/last) to preserve temporal structure
+        # subsample to 3 folds (first/middle/last) to preserve temporal structure
         # while cutting ~60-70% of per-fold loop wall. Uses all folds when fewer than 3.
         mid = len(folds) // 2
         folds = [folds[0], folds[mid], folds[-1]]
@@ -2171,8 +2158,8 @@ def harness(
     # ------------------------------------------------------------------
 
     # Leakage audit: run once in main process before parallel dispatch.
-    # v3.12: skip audit on warm cache hit for non-champion scopes to reduce wall time.
-    # v4.3: lr_skip_audit=True bypasses audit entirely for LR runs against pre-verified data.
+    # skip audit on warm cache hit for non-champion scopes to reduce wall time.
+    # lr_skip_audit=True bypasses audit entirely for LR runs against pre-verified data.
     leak_diag_user: HarnessDiagnostic | None = None
     leak_diag_email: HarnessDiagnostic | None = None
     _run_audit = not lr_skip_audit and not (_skip_audit_on_cache_hit and _full_work_df_cache_hit)
@@ -2200,7 +2187,7 @@ def harness(
     n_folds = len(folds)
     fold_seeds = rng_folds.integers(0, 2**32 - 1, size=n_folds)
 
-    # v5.2: CPU sampler is diagnostic-only; gate to champion_candidate to remove join() wall cost.
+    # CPU sampler is diagnostic-only; gate to champion_candidate to remove join() wall cost.
     import threading
 
     cpu_util_samples: list[float] = []
@@ -2477,7 +2464,7 @@ def harness(
     )
 
     # Secondary: single-confound residualized AUCs (old RFM user confound)
-    # T3.2 / T4.5: skip supplementary residualizations unless report_supplementary is True.
+    # skip supplementary residualizations unless report_supplementary is True.
     # fast_iter forces False; champion_candidate defaults True; comparison defaults False.
     _t_supp_resid = time.perf_counter()
     if report_supplementary:
@@ -2578,7 +2565,7 @@ def harness(
         else 0.0
     )
 
-    # v5.3: PSI + cell balance are heavy (per-bucket quantile/histogram work); skip for comparison scopes.
+    # PSI + cell balance are heavy (per-bucket quantile/histogram work); skip for comparison scopes.
     if not _skip_heavy_diags:
         # PSI: train vs test score distribution
         psi_train_test: float | None = _compute_psi(s_train_all, s_all)
@@ -2836,7 +2823,7 @@ def harness(
         ),
     ]
 
-    # T2a: old-RFM secondary is absent when report_old_rfm=False; emit only when computed.
+    # old-RFM secondary is absent when report_old_rfm=False; emit only when computed.
     if old_primary_value is not None:
         secondary_metrics.append(
             HarnessMetric(
@@ -2846,7 +2833,7 @@ def harness(
             )
         )
 
-    # T4.5: supplementary single-confound metrics are None in fast_iter; emit only when computed.
+    # supplementary single-confound metrics are None in fast_iter; emit only when computed.
     if roc_auc_user_prior_only is not None:
         secondary_metrics.append(
             HarnessMetric(
@@ -2932,18 +2919,10 @@ def harness(
     n_rows_evaluated = len(work_df)
 
     # Build resolved args with the actual solver chosen (for reproducibility tracking).
-    _resolved_ml_args = dict(ml_model_config.args)
     if ml_model_config.ml_model_type == ML_Model_Type.LOGISTIC_REGRESSION:
-        if "solver" not in _resolved_ml_args:
-            _penalty = _resolved_ml_args.get("penalty", "l2")
-            if _penalty == "l2":
-                _resolved_ml_args["solver"] = (
-                    "newton-cholesky" if _SKLEARN_HAS_NEWTON_CHOLESKY else "lbfgs"
-                )
-            elif _penalty == "l1":
-                _resolved_ml_args["solver"] = "liblinear"
-            elif _penalty == "elasticnet":
-                _resolved_ml_args["solver"] = "saga"
+        _resolved_ml_args: dict[str, Any] = _build_lr_args(ml_model_config.args)
+    else:
+        _resolved_ml_args = dict(ml_model_config.args)
 
     harness_secs = sum(st.seconds for st in stage_timings if st.owner == "harness")
     model_secs = sum(st.seconds for st in stage_timings if st.owner == "model")
