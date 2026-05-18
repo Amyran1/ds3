@@ -24,6 +24,13 @@ from libs.responses import (
 
 logger = logging.getLogger(__name__)
 
+# Scope policy for libs-level operations:
+#   - fast_iter and comparison_fast are PILOT tiers (4-fold subsample, B≤100) introduced
+#     in v3/v4 of civic_shout. They intentionally SKIP predictions.parquet (saves disk +
+#     wall) and SKIP discovery (it would over-fire on the wider CI of these tiers).
+#   - To make a comparison_fast result decision-bearing, callers must re-run with
+#     scope="comparison" via the --comparison-fast-first auto-escalation flow.
+# Adding a new scope to these sets is an explicit policy decision; don't auto-include.
 _SCOPE_WRITES_PREDICTIONS = frozenset({"smoke", "comparison", "champion_candidate"})
 _SCOPE_RUNS_DISCOVERY = frozenset({"champion_candidate", "comparison"})
 

@@ -42,7 +42,9 @@ class RunResultMetadata(BaseModel):
     run_id: str
     project: str
     comparison_group: str
-    scope: Literal["smoke", "comparison", "champion_candidate", "reproduction"]
+    scope: Literal[
+        "smoke", "comparison", "champion_candidate", "reproduction", "fast_iter", "comparison_fast"
+    ]
     status: Literal[
         "completed",
         "failed_validation",
@@ -56,6 +58,7 @@ class RunResultMetadata(BaseModel):
         "repeat_with_changes",
         "discard",
         "smoke_only",
+        "ambiguous",
     ] = "smoke_only"
     recorded_at_utc: str
     git_sha: str = ""
