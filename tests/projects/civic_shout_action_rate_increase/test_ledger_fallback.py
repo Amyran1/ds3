@@ -98,19 +98,13 @@ def test_write_error_traceback(tmp_path):
     assert "Traceback" in content
 
 
-def test_run_01_writes_failure_row_on_harness_exception(tmp_path, monkeypatch):
-    """Integration: monkeypatch harness() to raise → run_01 main writes failure_harness row + re-raises."""
+def test_run_01_writes_error_txt_on_run_record_exception(tmp_path, monkeypatch):
+    """Integration: monkeypatch run_record() to raise → run_01 main re-raises and writes error.txt.
+
+    Ledger failure-shell rows are tested in tests/libs/test_run_record.py (libs scope).
+    """
+    from libs import run_record as run_record_mod
     from projects.civic_shout_action_rate_increase.runs import run_01
-
-    sentinel = {
-        "_managed_by": "libs.ledgers.LedgerWriter",
-        "schema_version": "ledger/v1",
-        "created_at_utc": "2026-01-01T00:00:00",
-    }
-    fake_ledger = tmp_path / "results.jsonl"
-    fake_ledger.write_text(json.dumps(sentinel) + "\n")
-
-    monkeypatch.setattr(run_01, "_LEDGER", fake_ledger)
 
     minimal_df = pl.DataFrame(
         {
@@ -137,20 +131,23 @@ def test_run_01_writes_failure_row_on_harness_exception(tmp_path, monkeypatch):
     monkeypatch.setattr(run_01, "user_emails_cache", fake_cache)
     monkeypatch.setattr(run_01, "recency_feature_cache", fake_cache)
 
-    def _fake_harness(*args, **kwargs):
+    def _fake_run_record(**kwargs):
         raise RuntimeError("planted_failure_for_test")
 
-    monkeypatch.setattr(run_01, "harness", _fake_harness)
+    monkeypatch.setattr(run_record_mod, "run_record", _fake_run_record)
+    monkeypatch.setattr(run_01, "run_record", _fake_run_record)
+
+    run_dir = tmp_path / "run_01"
+    run_dir.mkdir()
+    monkeypatch.setattr(run_01, "_RUNS_DIR", tmp_path)
 
     with pytest.raises(RuntimeError, match="planted_failure_for_test"):
         run_01.main(
-            run_id="test_failure_integration",
+            run_id="run_01",
             sample_frac=None,
-            scope="comparison",
+            scope="smoke",
         )
 
-    rows = [json.loads(line) for line in fake_ledger.read_text().splitlines() if line]
-    failure_rows = [r for r in rows if r.get("run_id") == "test_failure_integration"]
-    assert len(failure_rows) == 1
-    assert failure_rows[0]["status"] == "failed_harness"
-    assert "planted_failure_for_test" in failure_rows[0].get("notes", "")
+    error_txt = tmp_path / "run_01" / "error.txt"
+    assert error_txt.exists(), "error.txt should be written on harness failure"
+    assert "planted_failure_for_test" in error_txt.read_text()

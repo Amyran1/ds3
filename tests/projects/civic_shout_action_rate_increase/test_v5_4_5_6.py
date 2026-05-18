@@ -102,8 +102,8 @@ def test_fold_construction_equivalence_via_slice() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_lr_compfast_skips_predictions_by_default() -> None:
-    """LR comparison_fast does not write predictions.parquet when write_predictions=False."""
+def test_lr_compfast_skips_predictions() -> None:
+    """LR comparison_fast does not write predictions.parquet (scope-gated by libs policy)."""
     from projects.civic_shout_action_rate_increase.runs.run_01 import _build_harness_kwargs
 
     df = make_synthetic_with_interaction(seed=42)
@@ -118,38 +118,14 @@ def test_lr_compfast_skips_predictions_by_default() -> None:
             scope="comparison_fast",
             bootstrap_n_resamples=10,
             model="lr",
-            write_predictions=False,
         )
         assert kwargs["predictions_dir"] is None, (
-            "LR comparison_fast should skip predictions by default"
-        )
-
-
-def test_lr_compfast_writes_predictions_when_opted_in() -> None:
-    """LR comparison_fast writes predictions when --write-predictions is set."""
-    from projects.civic_shout_action_rate_increase.runs.run_01 import _build_harness_kwargs
-
-    df = make_synthetic_with_interaction(seed=42)
-
-    with tempfile.TemporaryDirectory() as tmp:
-        artifacts_dir = Path(tmp)
-        kwargs = _build_harness_kwargs(
-            joined=df,
-            artifacts_dir=artifacts_dir,
-            sample_frac=None,
-            sample_seed=42,
-            scope="comparison_fast",
-            bootstrap_n_resamples=10,
-            model="lr",
-            write_predictions=True,
-        )
-        assert kwargs["predictions_dir"] == str(artifacts_dir), (
-            "LR comparison_fast should write predictions when opted in"
+            "LR comparison_fast should skip predictions (pilot tier, not decision-bearing)"
         )
 
 
 def test_lr_comparison_always_writes_predictions() -> None:
-    """LR comparison scope always writes predictions (decision-bearing), even without flag."""
+    """LR comparison scope always writes predictions (decision-bearing)."""
     from projects.civic_shout_action_rate_increase.runs.run_01 import _build_harness_kwargs
 
     df = make_synthetic_with_interaction(seed=42)
@@ -164,7 +140,6 @@ def test_lr_comparison_always_writes_predictions() -> None:
             scope="comparison",
             bootstrap_n_resamples=10,
             model="lr",
-            write_predictions=False,
         )
         assert kwargs["predictions_dir"] == str(artifacts_dir), (
             "LR comparison scope must always write predictions"

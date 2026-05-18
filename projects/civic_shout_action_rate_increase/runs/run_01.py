@@ -1,9 +1,21 @@
 """run_01: forward quarterly walk-forward at 5% sample tier.
 
 The first canonical ship run. Wires user_emails v3 + prior_action_recency v1
-through harness() with LightGBM classifier args from the plan's resolved decisions.
+through libs.run_record.run_record(...) with LightGBM classifier args from
+the plan's resolved decisions.
 
-Direct append to results.jsonl — libs/ledgers.py deferred per plan scope.
+R1–R4 tandem invariant: all non-profile branches route through a single
+run_record(...) call per logical run. The comparison_fast_first path issues
+one call for the pilot and a second call for the full run if the pilot is
+ambiguous; the auto_promote path issues one call for the fast_iter run and a
+second call for the promoted comparison if the verdict is clear.
+
+--profile is a developer diagnostic and intentionally bypasses
+run_record/ledgers. Use only for performance profiling; never as a
+decision-bearing artifact.
+
+Predictions write policy is scope-gated by libs.run_record (_SCOPE_WRITES_PREDICTIONS).
+comparison_fast is excluded from that set; the --write-predictions flag was removed.
 """
 
 from __future__ import annotations
@@ -23,6 +35,9 @@ os.environ.setdefault("OMP_WAIT_POLICY", "ACTIVE")
 import polars as pl
 
 from entities.civic_shout_user_emails.cache import cache as user_emails_cache
+from libs.ledgers import LedgerWriter
+from libs.responses import DiscoveryConfig, EDAConfig, RunResultMetadata
+from libs.run_record import RunRecordOutput, run_record
 from projects.civic_shout_action_rate_increase.features.prior_action_recency.cache import (
     cache as recency_feature_cache,
 )
@@ -30,7 +45,6 @@ from projects.civic_shout_action_rate_increase.harness import (
     HarnessResponse,
     ML_Model_Config,
     ML_Model_Type,
-    RunResultMetadata,
     harness,
 )
 from projects.civic_shout_action_rate_increase.runs._ledger_fallback import (
@@ -107,6 +121,53 @@ def _git_sha() -> str:
         return "unknown"
 
 
+def _build_model_cfg(model: str) -> ML_Model_Config:
+    if model == "lr":
+        return ML_Model_Config(
+            ml_model_type=ML_Model_Type.LOGISTIC_REGRESSION,
+            args=_LR_ARGS,
+            column_mapping={"group": "user_id"},
+        )
+    return ML_Model_Config(
+        ml_model_type=ML_Model_Type.LIGHTGBM_CLASSIFIER,
+        args=_LGBM_ARGS,
+        column_mapping={"group": "user_id"},
+    )
+
+
+def _build_extra_harness_kwargs(
+    scope: str,
+    bootstrap_n_resamples: int | None,
+    model: str,
+    lr_warm_start: bool,
+    lr_skip_audit: bool,
+    lr_fold_backend: str,
+    lr_skip_heavy_diagnostics: bool,
+) -> dict:
+    """Build the non-reserved harness kwargs (everything except the 7 reserved keys)."""
+    if model == "lr" and bootstrap_n_resamples is None:
+        if scope == "comparison_fast":
+            resolved_bootstrap_n: int | None = _LR_DEFAULT_BOOTSTRAP_N_COMPARISON_FAST
+        else:
+            resolved_bootstrap_n = _LR_DEFAULT_BOOTSTRAP_N_COMPARISON
+    else:
+        resolved_bootstrap_n = bootstrap_n_resamples
+
+    kwargs: dict = {"scope": scope}
+    if resolved_bootstrap_n is not None:
+        kwargs["bootstrap_n_resamples"] = resolved_bootstrap_n
+    if lr_warm_start and model == "lr":
+        kwargs["lr_warm_start"] = True
+        kwargs["fold_n_jobs"] = 1
+    if lr_skip_audit and model == "lr":
+        kwargs["lr_skip_audit"] = True
+    if model == "lr" and lr_fold_backend == "processes":
+        kwargs["lr_fold_backend"] = "processes"
+    if lr_skip_heavy_diagnostics and model == "lr":
+        kwargs["lr_skip_heavy_diagnostics"] = True
+    return kwargs
+
+
 def _build_harness_kwargs(
     joined: pl.DataFrame,
     artifacts_dir: Path,
@@ -119,7 +180,6 @@ def _build_harness_kwargs(
     lr_skip_audit: bool = False,
     lr_fold_backend: str = "threads",
     lr_skip_heavy_diagnostics: bool = False,
-    write_predictions: bool = False,
 ) -> dict:
     if model == "lr":
         ml_model_type = ML_Model_Type.LOGISTIC_REGRESSION
@@ -137,9 +197,10 @@ def _build_harness_kwargs(
         resolved_bootstrap_n = bootstrap_n_resamples
 
     # Cv5.4: LR comparison_fast is a pilot tier — predictions.parquet not needed
-    # for the decision-bearing flow. Skip by default; opt-in via --write-predictions.
-    # LR comparison scope keeps predictions (decision-bearing).
-    _skip_predictions = model == "lr" and scope == "comparison_fast" and not write_predictions
+    # for the decision-bearing flow. Predictions write is scope-gated by libs.run_record
+    # (_SCOPE_WRITES_PREDICTIONS excludes comparison_fast). Profile path uses this helper
+    # directly and can pass any scope; the harness itself governs predictions_dir.
+    _skip_predictions = model == "lr" and scope == "comparison_fast"
     predictions_dir_val: str | None = None if _skip_predictions else str(artifacts_dir)
 
     kwargs: dict = dict(
@@ -170,30 +231,6 @@ def _build_harness_kwargs(
     return kwargs
 
 
-def _write_result(
-    response: object,
-    metadata: RunResultMetadata,
-    run_dir: Path,
-) -> None:
-    assert isinstance(response, HarnessResponse)
-
-    row = response.to_result_row(metadata)
-    with _LEDGER.open("a") as f:
-        f.write(row.model_dump_json() + "\n")
-
-    (run_dir / "harness_response.json").write_text(response.model_dump_json(indent=2))
-
-    emit_manifest(metadata, response, run_dir)
-    emit_timing_row(metadata, response, _RUNS_DIR.parent)
-
-    print(
-        f"[{metadata.run_id}] scope={metadata.scope} "
-        f"primary={response.summary.primary_metric_value:.4f} "
-        f"ci=[{response.metrics.primary.ci_low:.4f}, {response.metrics.primary.ci_high:.4f}] "
-        f"elapsed={response.performance.total_seconds:.1f}s"
-    )
-
-
 def _should_escalate_to_comparison(mean: float, ci_half_width: float, delta: float = 0.001) -> bool:
     """Return True if the comparison_fast pilot result is ambiguous (warrants full comparison).
 
@@ -205,6 +242,25 @@ def _should_escalate_to_comparison(mean: float, ci_half_width: float, delta: flo
     clearly_above = lower > 0.5 + delta
     clearly_below = upper < 0.5 - delta
     return not (clearly_above or clearly_below)
+
+
+def _post_run_record_artifacts(
+    out: RunRecordOutput,
+    project_root: Path,
+) -> None:
+    run_dir = out.artifacts_dir.parent
+    proj_dir = project_root / "projects" / out.metadata.project
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "harness_response.json").write_text(out.harness_response.model_dump_json(indent=2))
+    emit_manifest(out.metadata, out.harness_response, run_dir)
+    emit_timing_row(out.metadata, out.harness_response, proj_dir)
+    print(
+        f"[{out.metadata.run_id}] scope={out.metadata.scope} "
+        f"primary={out.harness_response.summary.primary_metric_value:.4f} "
+        f"ci=[{out.harness_response.metrics.primary.ci_low:.4f}, "
+        f"{out.harness_response.metrics.primary.ci_high:.4f}] "
+        f"elapsed={out.harness_response.performance.total_seconds:.1f}s"
+    )
 
 
 def main(
@@ -222,7 +278,6 @@ def main(
     lr_skip_audit: bool = False,
     lr_fold_backend: str = "threads",
     lr_skip_heavy_diagnostics: bool = True,
-    write_predictions: bool = False,
 ) -> None:
     user_emails_df = user_emails_cache.get(3)
     features_df = recency_feature_cache.get(1)
@@ -236,44 +291,45 @@ def main(
     max_date = joined["date_sent"].max()
     joined = joined.filter(pl.col("date_sent") < (max_date - pl.duration(hours=24)))
 
+    project_root = Path(__file__).resolve().parents[3]
     run_dir = _RUNS_DIR / run_id
     artifacts_dir = run_dir / "artifacts"
     run_dir.mkdir(parents=True, exist_ok=True)
     artifacts_dir.mkdir(exist_ok=True)
 
     sha = _git_sha()
-    metadata = RunResultMetadata(
-        run_id=run_id,
-        project="civic_shout_action_rate_increase",
-        comparison_group=comparison_group,
-        scope=scope,  # type: ignore[arg-type]
-        recorded_at_utc=datetime.now(timezone.utc).isoformat(),
-        git_sha=sha,
-        data_fingerprint=None,
-    )
 
-    harness_kwargs = _build_harness_kwargs(
-        joined,
-        artifacts_dir,
-        sample_frac,
-        sample_seed,
-        scope,
-        bootstrap_n_resamples,
-        model,
-        lr_warm_start=lr_warm_start,
-        lr_skip_audit=lr_skip_audit,
-        lr_fold_backend=lr_fold_backend,
-        lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
-        write_predictions=write_predictions,
-    )
-
-    response: object = None
-
-    def _run_harness_inner() -> None:
-        nonlocal response
+    # --profile: direct harness() bypass — does not route through run_record or ledgers.
+    if profile:
+        metadata = RunResultMetadata(
+            run_id=run_id,
+            project="civic_shout_action_rate_increase",
+            comparison_group=comparison_group,
+            scope=scope,  # type: ignore[arg-type]
+            recorded_at_utc=datetime.now(timezone.utc).isoformat(),
+            git_sha=sha,
+            data_fingerprint="",
+            outcome_version="v1",
+        )
+        harness_kwargs = _build_harness_kwargs(
+            joined,
+            artifacts_dir,
+            sample_frac,
+            sample_seed,
+            scope,
+            bootstrap_n_resamples,
+            model,
+            lr_warm_start=lr_warm_start,
+            lr_skip_audit=lr_skip_audit,
+            lr_fold_backend=lr_fold_backend,
+            lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
+        )
+        prof = cProfile.Profile()
+        prof.enable()
         try:
             response = harness(**harness_kwargs)
         except Exception as e:
+            prof.disable()
             try:
                 write_error_traceback(run_dir=run_dir, error=e)
             except Exception as write_err:
@@ -292,11 +348,6 @@ def main(
             except Exception as write_err:
                 print(f"WARN: failed to write failure row to ledger: {write_err}", file=sys.stderr)
             raise
-
-    if profile:
-        prof = cProfile.Profile()
-        prof.enable()
-        _run_harness_inner()
         prof.disable()
 
         pstats_path = artifacts_dir / "profile.pstats"
@@ -310,22 +361,61 @@ def main(
         ps.sort_stats("tottime")
         ps.print_stats(30)
         txt_path.write_text(stream.getvalue())
-    else:
-        _run_harness_inner()
+        return
 
     # T2c: comparison_fast_first — run 4-fold pilot, escalate to full comparison only when ambiguous.
     if comparison_fast_first:
-        assert isinstance(response, HarnessResponse)
-        pilot_mean = response.summary.primary_metric_value
-        ci_low_pilot = response.metrics.primary.ci_low
-        ci_high_pilot = response.metrics.primary.ci_high
+        pilot_metadata = RunResultMetadata(
+            run_id=run_id,
+            project="civic_shout_action_rate_increase",
+            comparison_group=comparison_group,
+            scope="comparison_fast",  # type: ignore[arg-type]
+            recorded_at_utc=datetime.now(timezone.utc).isoformat(),
+            git_sha=sha,
+            data_fingerprint="",
+            outcome_version="v1",
+        )
+        pilot_extra_kwargs = _build_extra_harness_kwargs(
+            scope="comparison_fast",
+            bootstrap_n_resamples=bootstrap_n_resamples,
+            model=model,
+            lr_warm_start=lr_warm_start,
+            lr_skip_audit=lr_skip_audit,
+            lr_fold_backend=lr_fold_backend,
+            lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
+        )
+        try:
+            pilot_out = run_record(
+                metadata=pilot_metadata,
+                data=joined,
+                feature_cols=_FEATURE_COLS,
+                outcome_variable="actioned_24h",
+                model_cfg=_build_model_cfg(model),
+                sample_frac=sample_frac,
+                sample_seed=sample_seed,
+                harness_kwargs=pilot_extra_kwargs,
+                eda_config=EDAConfig(),
+                discovery_config=None,
+                project_root=project_root,
+            )
+        except Exception as e:
+            try:
+                write_error_traceback(run_dir=run_dir, error=e)
+            except Exception as write_err:
+                print(f"WARN: failed to write error.txt: {write_err}", file=sys.stderr)
+            raise
+
+        _post_run_record_artifacts(pilot_out, project_root)
+
+        assert pilot_out.harness_response is not None
+        pilot_mean = pilot_out.harness_response.summary.primary_metric_value
+        ci_low_pilot = pilot_out.harness_response.metrics.primary.ci_low
+        ci_high_pilot = pilot_out.harness_response.metrics.primary.ci_high
         ci_half_width: float = 0.0
         if ci_low_pilot is not None and ci_high_pilot is not None:
             ci_half_width = (ci_high_pilot - ci_low_pilot) / 2.0
         lower = pilot_mean - 1.96 * ci_half_width
         upper = pilot_mean + 1.96 * ci_half_width
-
-        _write_result(response, metadata, run_dir)
 
         if not _should_escalate_to_comparison(pilot_mean, ci_half_width):
             print(
@@ -341,62 +431,102 @@ def main(
         )
         full_run_id = run_id + "_comparison"
         full_run_dir = _RUNS_DIR / full_run_id
-        full_artifacts_dir = full_run_dir / "artifacts"
         full_run_dir.mkdir(parents=True, exist_ok=True)
-        full_artifacts_dir.mkdir(exist_ok=True)
 
         full_metadata = RunResultMetadata(
             run_id=full_run_id,
             project="civic_shout_action_rate_increase",
             comparison_group=comparison_group,
-            scope="comparison",
+            scope="comparison",  # type: ignore[arg-type]
             recorded_at_utc=datetime.now(timezone.utc).isoformat(),
             git_sha=sha,
-            data_fingerprint=None,
+            data_fingerprint="",
+            outcome_version="v1",
         )
-        full_kwargs = _build_harness_kwargs(
-            joined,
-            full_artifacts_dir,
-            sample_frac,
-            sample_seed,
-            "comparison",
-            bootstrap_n_resamples,
-            model,
+        full_extra_kwargs = _build_extra_harness_kwargs(
+            scope="comparison",
+            bootstrap_n_resamples=bootstrap_n_resamples,
+            model=model,
+            lr_warm_start=False,
             lr_skip_audit=lr_skip_audit,
             lr_fold_backend=lr_fold_backend,
             lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
         )
         try:
-            full_response = harness(**full_kwargs)
+            full_out = run_record(
+                metadata=full_metadata,
+                data=joined,
+                feature_cols=_FEATURE_COLS,
+                outcome_variable="actioned_24h",
+                model_cfg=_build_model_cfg(model),
+                sample_frac=sample_frac,
+                sample_seed=sample_seed,
+                harness_kwargs=full_extra_kwargs,
+                eda_config=EDAConfig(),
+                discovery_config=DiscoveryConfig(),
+                project_root=project_root,
+            )
         except Exception as e:
             try:
                 write_error_traceback(run_dir=full_run_dir, error=e)
             except Exception as write_err:
                 print(f"WARN: failed to write error.txt: {write_err}", file=sys.stderr)
-            try:
-                write_failure_shell_row(
-                    results_path=_LEDGER,
-                    run_id=full_run_id,
-                    project="civic_shout_action_rate_increase",
-                    comparison_group=comparison_group,
-                    scope=full_metadata.scope,
-                    status="failed_harness",
-                    error_msg=str(e),
-                    git_sha=sha,
-                )
-            except Exception as write_err:
-                print(f"WARN: failed to write failure row to ledger: {write_err}", file=sys.stderr)
             raise
-        _write_result(full_response, full_metadata, full_run_dir)
+
+        _post_run_record_artifacts(full_out, project_root)
         return
 
     # T4.6: adaptive promotion gate — auto-promote fast_iter to comparison when
     # the directional verdict is unambiguous (|primary - 0.5| > 1.5 × CI half-width).
     if auto_promote and scope == "fast_iter":
-        assert isinstance(response, HarnessResponse)
-        primary = response.summary.primary_metric_value
-        ci_low = response.metrics.primary.ci_low
-        ci_high = response.metrics.primary.ci_high
+        # Do not set verdict here — run_record commits the fast_iter row eagerly
+        # before we know promotion outcome. Ambiguous signal written separately below.
+        fast_metadata = RunResultMetadata(
+            run_id=run_id,
+            project="civic_shout_action_rate_increase",
+            comparison_group=comparison_group,
+            scope="fast_iter",  # type: ignore[arg-type]
+            recorded_at_utc=datetime.now(timezone.utc).isoformat(),
+            git_sha=sha,
+            data_fingerprint="",
+            outcome_version="v1",
+        )
+        fast_extra_kwargs = _build_extra_harness_kwargs(
+            scope="fast_iter",
+            bootstrap_n_resamples=bootstrap_n_resamples,
+            model=model,
+            lr_warm_start=lr_warm_start,
+            lr_skip_audit=lr_skip_audit,
+            lr_fold_backend=lr_fold_backend,
+            lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
+        )
+        try:
+            fast_out = run_record(
+                metadata=fast_metadata,
+                data=joined,
+                feature_cols=_FEATURE_COLS,
+                outcome_variable="actioned_24h",
+                model_cfg=_build_model_cfg(model),
+                sample_frac=sample_frac,
+                sample_seed=sample_seed,
+                harness_kwargs=fast_extra_kwargs,
+                eda_config=EDAConfig(),
+                discovery_config=None,
+                project_root=project_root,
+            )
+        except Exception as e:
+            try:
+                write_error_traceback(run_dir=run_dir, error=e)
+            except Exception as write_err:
+                print(f"WARN: failed to write error.txt: {write_err}", file=sys.stderr)
+            raise
+
+        _post_run_record_artifacts(fast_out, project_root)
+
+        assert fast_out.harness_response is not None
+        primary = fast_out.harness_response.summary.primary_metric_value
+        ci_low = fast_out.harness_response.metrics.primary.ci_low
+        ci_high = fast_out.harness_response.metrics.primary.ci_high
         half_width: float = 0.0
         if ci_low is not None and ci_high is not None:
             half_width = (ci_high - ci_low) / 2.0
@@ -409,77 +539,114 @@ def main(
                 f"[{run_id}] directional verdict clear "
                 f"(|{primary:.4f} - 0.5| > 1.5 × {half_width:.4f}); promoting to comparison."
             )
-            _write_result(response, metadata, run_dir)
-
             promoted_run_id = run_id + "_promoted"
             promoted_run_dir = _RUNS_DIR / promoted_run_id
-            promoted_artifacts_dir = promoted_run_dir / "artifacts"
             promoted_run_dir.mkdir(parents=True, exist_ok=True)
-            promoted_artifacts_dir.mkdir(exist_ok=True)
 
             promoted_metadata = RunResultMetadata(
                 run_id=promoted_run_id,
                 project="civic_shout_action_rate_increase",
                 comparison_group=comparison_group,
-                scope="comparison",
+                scope="comparison",  # type: ignore[arg-type]
                 recorded_at_utc=datetime.now(timezone.utc).isoformat(),
                 git_sha=sha,
-                data_fingerprint=None,
+                data_fingerprint="",
+                outcome_version="v1",
             )
-            promoted_kwargs = _build_harness_kwargs(
-                joined,
-                promoted_artifacts_dir,
-                sample_frac,
-                sample_seed,
-                "comparison",
-                bootstrap_n_resamples,
-                model,
+            promoted_extra_kwargs = _build_extra_harness_kwargs(
+                scope="comparison",
+                bootstrap_n_resamples=bootstrap_n_resamples,
+                model=model,
+                lr_warm_start=False,
                 lr_skip_audit=lr_skip_audit,
                 lr_fold_backend=lr_fold_backend,
                 lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
             )
             try:
-                promoted_response = harness(**promoted_kwargs)
+                promoted_out = run_record(
+                    metadata=promoted_metadata,
+                    data=joined,
+                    feature_cols=_FEATURE_COLS,
+                    outcome_variable="actioned_24h",
+                    model_cfg=_build_model_cfg(model),
+                    sample_frac=sample_frac,
+                    sample_seed=sample_seed,
+                    harness_kwargs=promoted_extra_kwargs,
+                    eda_config=EDAConfig(),
+                    discovery_config=DiscoveryConfig(),
+                    project_root=project_root,
+                )
             except Exception as e:
                 try:
                     write_error_traceback(run_dir=promoted_run_dir, error=e)
                 except Exception as write_err:
                     print(f"WARN: failed to write error.txt: {write_err}", file=sys.stderr)
-                try:
-                    write_failure_shell_row(
-                        results_path=_LEDGER,
-                        run_id=promoted_run_id,
-                        project="civic_shout_action_rate_increase",
-                        comparison_group=comparison_group,
-                        scope=promoted_metadata.scope,
-                        status="failed_harness",
-                        error_msg=str(e),
-                        git_sha=sha,
-                    )
-                except Exception as write_err:
-                    print(
-                        f"WARN: failed to write failure row to ledger: {write_err}", file=sys.stderr
-                    )
                 raise
-            _write_result(promoted_response, promoted_metadata, promoted_run_dir)
+
+            _post_run_record_artifacts(promoted_out, project_root)
         else:
             print(
                 f"[{run_id}] directional verdict ambiguous "
                 f"(|{primary:.4f} - 0.5| ≤ 1.5 × {half_width:.4f}); not promoting."
             )
-            ambiguous_metadata = RunResultMetadata(
-                run_id=run_id,
-                project="civic_shout_action_rate_increase",
-                comparison_group=comparison_group,
-                scope="fast_iter",  # type: ignore[arg-type]
-                verdict="ambiguous",
-                recorded_at_utc=metadata.recorded_at_utc,
-                git_sha=sha,
-                data_fingerprint=None,
-            )
-            _write_result(response, ambiguous_metadata, run_dir)
-    else:
-        _write_result(response, metadata, run_dir)
+            # Write a second atomic ledger row with verdict="ambiguous" so the signal
+            # is preserved as an explicit annotation rather than implied by absence.
+            # eda_row reuse is intentional (R4 break by design — annotation-only writes
+            # are not yet supported by LedgerWriter).
+            if fast_out.result_row is not None:
+                ambiguous_row = fast_out.result_row.model_copy(update={"verdict": "ambiguous"})
+                LedgerWriter(project_root, "civic_shout_action_rate_increase").append_atomic(
+                    result_row=ambiguous_row,
+                    eda_row=fast_out.eda_row,
+                    discovery_row=None,
+                )
+                print(f"[{run_id}] Wrote ambiguous-verdict annotation row.")
+        return
+
+    # Default single-call branch.
+    discovery_config = DiscoveryConfig() if scope in {"comparison", "champion_candidate"} else None
+    metadata = RunResultMetadata(
+        run_id=run_id,
+        project="civic_shout_action_rate_increase",
+        comparison_group=comparison_group,
+        scope=scope,  # type: ignore[arg-type]
+        recorded_at_utc=datetime.now(timezone.utc).isoformat(),
+        git_sha=sha,
+        data_fingerprint="",
+        outcome_version="v1",
+    )
+    extra_kwargs = _build_extra_harness_kwargs(
+        scope=scope,
+        bootstrap_n_resamples=bootstrap_n_resamples,
+        model=model,
+        lr_warm_start=lr_warm_start,
+        lr_skip_audit=lr_skip_audit,
+        lr_fold_backend=lr_fold_backend,
+        lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
+    )
+
+    try:
+        out = run_record(
+            metadata=metadata,
+            data=joined,
+            feature_cols=_FEATURE_COLS,
+            outcome_variable="actioned_24h",
+            model_cfg=_build_model_cfg(model),
+            sample_frac=sample_frac,
+            sample_seed=sample_seed,
+            harness_kwargs=extra_kwargs,
+            eda_config=EDAConfig(),
+            discovery_config=discovery_config,
+            project_root=project_root,
+        )
+    except Exception as e:
+        try:
+            write_error_traceback(run_dir=run_dir, error=e)
+        except Exception as write_err:
+            print(f"WARN: failed to write error.txt: {write_err}", file=sys.stderr)
+        raise
+
+    _post_run_record_artifacts(out, project_root)
 
 
 if __name__ == "__main__":
@@ -601,17 +768,6 @@ if __name__ == "__main__":
             "Use --no-lr-skip-heavy-diagnostics to re-enable."
         ),
     )
-    parser.add_argument(
-        "--write-predictions",
-        action="store_true",
-        default=False,
-        dest="write_predictions",
-        help=(
-            "Force predictions.parquet write for LR comparison_fast runs. "
-            "By default, LR comparison_fast skips the predictions write (pilot tier; "
-            "not decision-bearing). LR comparison always writes predictions regardless."
-        ),
-    )
     args = parser.parse_args()
 
     if args.auto_promote and args.scope != "fast_iter":
@@ -619,6 +775,9 @@ if __name__ == "__main__":
 
     if args.comparison_fast_first and args.scope != "comparison_fast":
         parser.error("--comparison-fast-first requires --scope comparison_fast")
+
+    if args.profile and (args.comparison_fast_first or args.auto_promote):
+        parser.error("--profile cannot be combined with --comparison-fast-first or --auto-promote")
 
     main(
         run_id=args.run_id,
@@ -633,5 +792,4 @@ if __name__ == "__main__":
         lr_skip_audit=args.lr_skip_audit,
         lr_fold_backend=args.lr_fold_backend,
         lr_skip_heavy_diagnostics=args.lr_skip_heavy_diagnostics,
-        write_predictions=args.write_predictions,
     )
