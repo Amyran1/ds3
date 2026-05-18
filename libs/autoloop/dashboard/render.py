@@ -566,14 +566,47 @@ def _build_mockup_a_chart(
     )
 
 
+_SCOPE_ICONS: dict[str, str] = {
+    "smoke": "💨",
+    "fast_iter": "⚡",
+    "comparison_fast": "⚡≈",
+    "comparison": "≈",
+    "champion_candidate": "🏆",
+    "reproduction": "♻",
+}
+
+
+def _resolve_scope(run_id: str, res_by_run: dict[str, dict]) -> str:
+    explicit = res_by_run.get(run_id, {}).get("scope") if run_id != "—" else None
+    if explicit:
+        return explicit
+    if run_id == "—":
+        return "—"
+    if "_smoke" in run_id:
+        return "smoke"
+    return "comparison"
+
+
+def _fmt_scope(scope: str) -> str:
+    if scope == "—":
+        return "—"
+    icon = _SCOPE_ICONS.get(scope, "")
+    prefix = f"{icon} " if icon else ""
+    return f"{prefix}{html.escape(scope)}"
+
+
 def _build_iter_table(
     iters: list[dict],
     baseline_metric: float | None,
     champion_run_id: str | None,
     metric_name: str,
     running: dict,
+    results: list[dict] | None = None,
 ) -> str:
     current_iter_n = running.get("iter")
+    res_by_run: dict[str, dict] = {
+        r.get("run_id"): r for r in (results or []) if isinstance(r, dict) and r.get("run_id")
+    }
 
     rows: list[str] = []
     for it in sorted(iters, key=lambda i: i.get("iteration_id", 0)):
@@ -586,12 +619,7 @@ def _build_iter_table(
         wrote_files = exec_dict.get("wrote_files") if exec_d else None
         family = _extract_family_from_wrote_files(wrote_files) or "—"
 
-        scope_raw = "—"
-        if run_id != "—":
-            if "_smoke" in run_id:
-                scope_raw = "smoke"
-            else:
-                scope_raw = "comparison"
+        scope_raw = _resolve_scope(run_id, res_by_run)
 
         metric = exec_dict.get("harness_metric") if exec_d else None
         metric_str = f"{float(metric):.3f}" if metric is not None else "—"
@@ -651,7 +679,7 @@ def _build_iter_table(
             f"<td>{iter_id:02d}</td>"
             f"<td>{html.escape(run_id)}</td>"
             f"<td>{html.escape(family)}</td>"
-            f"<td>{html.escape(scope_raw)}</td>"
+            f'<td class="scope-cell scope-{html.escape(scope_raw)}">{_fmt_scope(scope_raw)}</td>'
             f'<td class="num">{metric_str}</td>'
             f'<td class="num {delta_cls}">{delta_str}</td>'
             f'<td class="num">{dollars_str}</td>'
@@ -1486,7 +1514,9 @@ def _render_body() -> str:
     scatter_chart = _build_mockup_a_chart(
         iters, baseline_metric, goal_metric, metric_name, champion_run_id
     )
-    iter_table = _build_iter_table(iters, baseline_metric, champion_run_id, metric_name, running)
+    iter_table = _build_iter_table(
+        iters, baseline_metric, champion_run_id, metric_name, running, results
+    )
     project_root = ROOT / "projects" / PROJECT
     perf_section = _build_performance_section(project_root)
 
@@ -2167,10 +2197,10 @@ def render_once() -> None:
         )
     _OUT_DIR.mkdir(parents=True, exist_ok=True)
     tmp = OUT.with_suffix(".tmp")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, OUT)
     canonical_tmp = OUT_CANONICAL.with_suffix(".tmp")
-    canonical_tmp.write_text(text)
+    canonical_tmp.write_text(text, encoding="utf-8")
     os.replace(canonical_tmp, OUT_CANONICAL)
 
     try:
