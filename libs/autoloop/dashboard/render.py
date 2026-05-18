@@ -249,9 +249,16 @@ def read_jsonl(p: Path) -> list[dict]:
         if not line:
             continue
         try:
-            out.append(json.loads(line))
+            obj = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if (
+            isinstance(obj, dict)
+            and obj.get("_managed_by")
+            and obj.get("schema_version") == "ledger/v1"
+        ):
+            continue
+        out.append(obj)
     return out
 
 
