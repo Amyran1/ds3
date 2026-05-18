@@ -10,6 +10,24 @@ from typing import Literal
 logger = logging.getLogger(__name__)
 
 
+def _lookup_row_metric(row: dict, primary_metric: str) -> float | None:
+    """Lookup the primary metric value from a results.jsonl row.
+
+    Supports both typed schema (primary_metric_name + primary_metric_value)
+    and legacy flat schema ({"auc": 0.85}). Legacy schema takes precedence
+    for backwards compatibility — typed-schema fallback only fires when the
+    flat lookup returns None.
+
+    Note: primary_metric_name comparison is case-sensitive and whitespace-sensitive.
+    This is acceptable because primary_metric_name is written by `RunResultRow` (Pydantic),
+    which validates and normalizes on write. Raw hand-edited ledgers may need normalization.
+    """
+    value = row.get(primary_metric)
+    if value is None and row.get("primary_metric_name") == primary_metric:
+        value = row.get("primary_metric_value")
+    return value
+
+
 @dataclass
 class PruneReport:
     kept_run_ids: list[str] = field(default_factory=list)
@@ -56,7 +74,7 @@ def _detect_champion_from_results(
             continue
         if row.get("status") != "completed":
             continue
-        value = row.get(primary_metric)
+        value = _lookup_row_metric(row, primary_metric)
         if value is None:
             continue
         run_id = row.get("run_id")
@@ -105,7 +123,7 @@ def prune_old_predictions(
             if row.get("status") != "completed":
                 continue
 
-            value = row.get(primary_metric)
+            value = _lookup_row_metric(row, primary_metric)
             if value is None:
                 continue
 
