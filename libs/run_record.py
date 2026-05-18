@@ -153,6 +153,19 @@ def _write_failure_shell_rows(
         logger.exception("Failed to write failure shell rows for run %s", metadata.run_id)
 
 
+_HARNESS_RESERVED_KWARGS = frozenset(
+    {
+        "data",
+        "feature_cols",
+        "outcome_variable",
+        "ml_model_config",
+        "sample_frac",
+        "sample_seed",
+        "predictions_dir",
+    }
+)
+
+
 def run_record(
     *,
     metadata: RunResultMetadata,
@@ -160,6 +173,7 @@ def run_record(
     feature_cols: list[str],
     outcome_variable: str,
     model_cfg: dict[str, Any],
+    harness_kwargs: dict[str, Any] | None = None,
     eda_config: EDAConfig | None = None,
     discovery_config: DiscoveryConfig | None = None,
     project_root: Path | None = None,
@@ -171,6 +185,11 @@ def run_record(
 
     if not RUN_ID_REGEX.fullmatch(metadata.run_id):
         raise ValueError(f"run_id must match 'run_N+' pattern, got {metadata.run_id!r}")
+
+    extra_harness_kwargs = harness_kwargs or {}
+    conflicts = _HARNESS_RESERVED_KWARGS & set(extra_harness_kwargs.keys())
+    if conflicts:
+        raise ValueError(f"harness_kwargs may not override reserved kwargs: {sorted(conflicts)}")
 
     if not metadata.git_sha:
         metadata = metadata.model_copy(update={"git_sha": _resolve_git_sha(resolved_root)})
@@ -223,6 +242,7 @@ def run_record(
             ml_model_config=model_cfg,
             sample_frac=None,
             predictions_dir=str(predictions_dir) if predictions_dir is not None else None,
+            **extra_harness_kwargs,
         )
     except Exception as e:
         _write_failure_shell_rows(metadata, "failed_harness", f"Harness failed: {e}", resolved_root)

@@ -155,6 +155,7 @@ def main() -> RunRecordOutput:
         eda_config=EDAConfig(),
         discovery_config=None,
         project_root=project_root,
+        harness_kwargs={"scope": metadata.scope},
     )
 
 
