@@ -25,6 +25,7 @@ from sklearn.preprocessing import StandardScaler
 _SKLEARN_HAS_NEWTON_CHOLESKY = tuple(map(int, sklearn.__version__.split(".")[:2])) >= (1, 4)
 
 from libs.perf_equivalence import compute_predictions_hash
+from libs.responses import HarnessDiagnostic
 from libs.responses import HarnessResponse as _LibsHarnessResponse
 from libs.responses import RunResultMetadata as _LibsRunResultMetadata
 from libs.responses import RunResultRow as _LibsRunResultRow
@@ -175,13 +176,6 @@ class HarnessPerformance(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
-class HarnessDiagnostic(BaseModel):
-    name: str
-    severity: Literal["info", "warning", "error"]
-    message: str
-    values: dict[str, Any] = Field(default_factory=dict)
-
-
 class HarnessArtifact(BaseModel):
     name: str = "predictions"
     kind: Literal["table", "plot", "model", "predictions", "report", "other"]
@@ -326,7 +320,6 @@ class HarnessResponse(_LibsHarnessResponse):
     data_profile: None = None  # type: ignore[assignment]  # shadows libs required field; project uses `data`
     metrics: HarnessMetrics
     performance: HarnessPerformance  # type: ignore[assignment]
-    diagnostics: list[HarnessDiagnostic] = Field(default_factory=list)
     artifacts: list[HarnessArtifact] = Field(default_factory=list)  # type: ignore[assignment]
     reproducibility: HarnessReproducibility
     model_interpretability: dict[str, Any] | None = None

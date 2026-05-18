@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -11,6 +11,7 @@ __all__ = [
     "HarnessPerformance",
     "HarnessDataProfile",
     "HarnessArtifact",
+    "HarnessDiagnostic",
     "HarnessSummary",
     "HarnessResponse",
     "RunResultRow",
@@ -105,6 +106,15 @@ class HarnessDataProfile(BaseModel):
     n_features: int
 
 
+class HarnessDiagnostic(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    name: str
+    severity: Literal["info", "warning", "error"]
+    message: str
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
 class HarnessArtifact(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
@@ -162,7 +172,11 @@ class HarnessResponse(BaseModel):
     performance: HarnessPerformance
     data_profile: HarnessDataProfile
     artifacts: list[HarnessArtifact] = []
+    diagnostics: list[HarnessDiagnostic] = Field(default_factory=list)
     fingerprint: str = ""
+
+    def get_diagnostic(self, name: str) -> HarnessDiagnostic | None:
+        return next((d for d in self.diagnostics if d.name == name), None)
 
     def to_result_row(self, metadata: RunResultMetadata) -> RunResultRow:
         return RunResultRow(
