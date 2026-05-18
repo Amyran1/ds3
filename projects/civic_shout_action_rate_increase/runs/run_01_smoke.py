@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,6 +27,10 @@ from projects.civic_shout_action_rate_increase.harness import (
     ML_Model_Type,
     RunResultMetadata,
     harness,
+)
+from projects.civic_shout_action_rate_increase.runs._ledger_fallback import (
+    write_error_traceback,
+    write_failure_shell_row,
 )
 from projects.civic_shout_action_rate_increase.runs.manifest_helper import emit_manifest
 from projects.civic_shout_action_rate_increase.runs.timing_helper import emit_timing_row
@@ -109,19 +114,39 @@ def main(
         data_fingerprint=None,
     )
 
-    response = harness(
-        data=joined,
-        feature_cols=_FEATURE_COLS,
-        ml_model_config=ML_Model_Config(
-            ml_model_type=ML_Model_Type.LIGHTGBM_CLASSIFIER,
-            args=_LGBM_ARGS,
-            column_mapping={"group": "user_id"},
-        ),
-        outcome_variable="actioned_24h",
-        sample_frac=sample_frac,
-        sample_seed=sample_seed,
-        predictions_dir=str(artifacts_dir),
-    )
+    try:
+        response = harness(
+            data=joined,
+            feature_cols=_FEATURE_COLS,
+            ml_model_config=ML_Model_Config(
+                ml_model_type=ML_Model_Type.LIGHTGBM_CLASSIFIER,
+                args=_LGBM_ARGS,
+                column_mapping={"group": "user_id"},
+            ),
+            outcome_variable="actioned_24h",
+            sample_frac=sample_frac,
+            sample_seed=sample_seed,
+            predictions_dir=str(artifacts_dir),
+        )
+    except Exception as e:
+        try:
+            write_error_traceback(run_dir=run_dir, error=e)
+        except Exception as write_err:
+            print(f"WARN: failed to write error.txt: {write_err}", file=sys.stderr)
+        try:
+            write_failure_shell_row(
+                results_path=_LEDGER,
+                run_id=run_id,
+                project="civic_shout_action_rate_increase",
+                comparison_group=comparison_group,
+                scope=scope,
+                status="failed_harness",
+                error_msg=str(e),
+                git_sha=metadata.git_sha,
+            )
+        except Exception as write_err:
+            print(f"WARN: failed to write failure row to ledger: {write_err}", file=sys.stderr)
+        raise
 
     row = response.to_result_row(metadata)
     with _LEDGER.open("a") as f:

@@ -13,6 +13,7 @@ import cProfile
 import os
 import pstats
 import subprocess
+import sys
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
@@ -31,6 +32,10 @@ from projects.civic_shout_action_rate_increase.harness import (
     ML_Model_Type,
     RunResultMetadata,
     harness,
+)
+from projects.civic_shout_action_rate_increase.runs._ledger_fallback import (
+    write_error_traceback,
+    write_failure_shell_row,
 )
 from projects.civic_shout_action_rate_increase.runs.manifest_helper import emit_manifest
 from projects.civic_shout_action_rate_increase.runs.timing_helper import emit_timing_row
@@ -266,7 +271,27 @@ def main(
 
     def _run_harness_inner() -> None:
         nonlocal response
-        response = harness(**harness_kwargs)
+        try:
+            response = harness(**harness_kwargs)
+        except Exception as e:
+            try:
+                write_error_traceback(run_dir=run_dir, error=e)
+            except Exception as write_err:
+                print(f"WARN: failed to write error.txt: {write_err}", file=sys.stderr)
+            try:
+                write_failure_shell_row(
+                    results_path=_LEDGER,
+                    run_id=run_id,
+                    project="civic_shout_action_rate_increase",
+                    comparison_group=comparison_group,
+                    scope=scope,
+                    status="failed_harness",
+                    error_msg=str(e),
+                    git_sha=sha,
+                )
+            except Exception as write_err:
+                print(f"WARN: failed to write failure row to ledger: {write_err}", file=sys.stderr)
+            raise
 
     if profile:
         prof = cProfile.Profile()
@@ -341,7 +366,27 @@ def main(
             lr_fold_backend=lr_fold_backend,
             lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
         )
-        full_response = harness(**full_kwargs)
+        try:
+            full_response = harness(**full_kwargs)
+        except Exception as e:
+            try:
+                write_error_traceback(run_dir=full_run_dir, error=e)
+            except Exception as write_err:
+                print(f"WARN: failed to write error.txt: {write_err}", file=sys.stderr)
+            try:
+                write_failure_shell_row(
+                    results_path=_LEDGER,
+                    run_id=full_run_id,
+                    project="civic_shout_action_rate_increase",
+                    comparison_group=comparison_group,
+                    scope=full_metadata.scope,
+                    status="failed_harness",
+                    error_msg=str(e),
+                    git_sha=sha,
+                )
+            except Exception as write_err:
+                print(f"WARN: failed to write failure row to ledger: {write_err}", file=sys.stderr)
+            raise
         _write_result(full_response, full_metadata, full_run_dir)
         return
 
@@ -393,7 +438,29 @@ def main(
                 lr_fold_backend=lr_fold_backend,
                 lr_skip_heavy_diagnostics=lr_skip_heavy_diagnostics,
             )
-            promoted_response = harness(**promoted_kwargs)
+            try:
+                promoted_response = harness(**promoted_kwargs)
+            except Exception as e:
+                try:
+                    write_error_traceback(run_dir=promoted_run_dir, error=e)
+                except Exception as write_err:
+                    print(f"WARN: failed to write error.txt: {write_err}", file=sys.stderr)
+                try:
+                    write_failure_shell_row(
+                        results_path=_LEDGER,
+                        run_id=promoted_run_id,
+                        project="civic_shout_action_rate_increase",
+                        comparison_group=comparison_group,
+                        scope=promoted_metadata.scope,
+                        status="failed_harness",
+                        error_msg=str(e),
+                        git_sha=sha,
+                    )
+                except Exception as write_err:
+                    print(
+                        f"WARN: failed to write failure row to ledger: {write_err}", file=sys.stderr
+                    )
+                raise
             _write_result(promoted_response, promoted_metadata, promoted_run_dir)
         else:
             print(
