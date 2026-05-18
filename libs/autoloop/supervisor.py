@@ -458,7 +458,7 @@ def _latest_champion_run_id(project_root: Path, project: str) -> str:
         return ""
     try:
         content = champion_path.read_text()
-        m = re.search(r"run_\d+", content)
+        m = re.search(r"run_\d\w*", content, re.ASCII)
         if m:
             return m.group()
     except OSError:

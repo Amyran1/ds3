@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import logging
+import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -23,6 +24,8 @@ from libs.responses import (
 )
 
 logger = logging.getLogger(__name__)
+
+RUN_ID_REGEX = re.compile(r"^run_\w+$", re.ASCII)
 
 # Scope policy for libs-level operations:
 #   - fast_iter and comparison_fast are PILOT tiers (4-fold subsample, B≤100) introduced
@@ -161,14 +164,12 @@ def run_record(
     discovery_config: DiscoveryConfig | None = None,
     project_root: Path | None = None,
 ) -> RunRecordOutput:
-    import re
-
     resolved_root = project_root if project_root is not None else Path.cwd()
     proj_dir = resolved_root / "projects" / metadata.project
     runs_dir = proj_dir / "runs"
     artifacts_dir = runs_dir / metadata.run_id / "artifacts"
 
-    if not re.fullmatch(r"run_\d+", metadata.run_id):
+    if not RUN_ID_REGEX.fullmatch(metadata.run_id):
         raise ValueError(f"run_id must match 'run_N+' pattern, got {metadata.run_id!r}")
 
     if not metadata.git_sha:

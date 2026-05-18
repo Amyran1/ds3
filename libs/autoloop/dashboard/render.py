@@ -254,8 +254,9 @@ def read_jsonl(p: Path) -> list[dict]:
             continue
         if (
             isinstance(obj, dict)
-            and obj.get("_managed_by")
-            and obj.get("schema_version") == "ledger/v1"
+            and "_managed_by" in obj
+            and isinstance(obj.get("schema_version"), str)
+            and obj["schema_version"].startswith("ledger/")
         ):
             continue
         out.append(obj)
@@ -273,7 +274,8 @@ def read_json(p: Path) -> dict:
 
 def detect_running_phase() -> dict:
     """Return {'iter': N, 'phase': 'planner'|'executor', 'pid': X, 'started': iso}
-    or {} if no autoloop session is currently running."""
+    or {} if no autoloop session is currently running.
+    """
     try:
         out = subprocess.run(
             ["ps", "-eo", "pid,lstart,command"],
@@ -314,7 +316,7 @@ def detect_running_phase() -> dict:
     return {}
 
 
-def fmt_dur(seconds: int | float | None) -> str:
+def fmt_dur(seconds: float | None) -> str:
     if seconds is None:
         return "—"
     s = int(seconds)
@@ -369,7 +371,7 @@ def _read_champion_run_id() -> str | None:
     if not champion_path.exists():
         return None
     text = champion_path.read_text()
-    m = re.search(r"(run_\d+)", text)
+    m = re.search(r"(run_\d\w*)", text, re.ASCII)
     return m.group(1) if m else None
 
 

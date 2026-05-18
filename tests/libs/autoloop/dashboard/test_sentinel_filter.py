@@ -29,14 +29,42 @@ def test_filters_ledger_sentinel(tmp_path):
     assert all("_managed_by" not in r for r in rows)
 
 
-def test_preserves_non_ledger_v1_sentinels(tmp_path):
-    """Row with _managed_by but different schema_version → NOT filtered (conservative match)."""
+def test_filters_future_ledger_versions(tmp_path):
+    """Row with _managed_by + schema_version='ledger/v2' (future) → FILTERED (forward-compatible)."""
     p = tmp_path / "results.jsonl"
     _write_jsonl(
         p,
         [
             {"_managed_by": "libs.ledgers.LedgerWriter", "schema_version": "ledger/v2"},
             {"run_id": "run_01", "primary_metric_value": 0.85},
+        ],
+    )
+    rows = read_jsonl(p)
+    assert len(rows) == 1
+    assert rows[0]["run_id"] == "run_01"
+
+
+def test_managed_by_without_schema_version_not_filtered(tmp_path):
+    """Row with _managed_by present but no schema_version key — NOT filtered (defensive).
+
+    Documents the conservative contract: only filter rows that explicitly
+    self-identify as ledger/* schema. A malformed sentinel (or future-schema-without-version)
+    is shown rather than silently dropped.
+    """
+    p = tmp_path / "results.jsonl"
+    _write_jsonl(p, [{"_managed_by": "libs.ledgers.LedgerWriter"}])
+    rows = read_jsonl(p)
+    assert len(rows) == 1
+
+
+def test_preserves_non_ledger_sentinels(tmp_path):
+    """Row with _managed_by + schema_version='manifest/v1' (different namespace) → NOT filtered."""
+    p = tmp_path / "results.jsonl"
+    _write_jsonl(
+        p,
+        [
+            {"_managed_by": "some_other_tool", "schema_version": "manifest/v1"},
+            {"run_id": "run_01"},
         ],
     )
     rows = read_jsonl(p)
@@ -72,15 +100,8 @@ def test_malformed_lines_skipped(tmp_path):
     assert len(rows) == 1
 
 
-def test_parity_with_leaderboard_read_jsonl(tmp_path):
-    """Cross-check: render.read_jsonl and leaderboard._read_jsonl should return same number of rows.
-
-    NOTE: leaderboard._read_jsonl filters ANY row with _managed_by (less conservative).
-    render.read_jsonl filters only rows with BOTH _managed_by AND schema_version=="ledger/v1".
-    With a pure ledger/v1 sentinel, they agree on 2 data rows. With the current corpus, counts match.
-    """
-    from libs.leaderboard import _read_jsonl as leaderboard_read
-
+def test_filters_standard_sentinel_count(tmp_path):
+    """Standard ledger/v1 sentinel + 2 real rows → 2 rows returned."""
     p = tmp_path / "results.jsonl"
     _write_jsonl(
         p,
@@ -90,6 +111,5 @@ def test_parity_with_leaderboard_read_jsonl(tmp_path):
             {"run_id": "run_02", "primary_metric_value": 0.90},
         ],
     )
-    dashboard_rows = read_jsonl(p)
-    leaderboard_rows = leaderboard_read(p)
-    assert len(dashboard_rows) == len(leaderboard_rows)
+    rows = read_jsonl(p)
+    assert len(rows) == 2

@@ -44,7 +44,7 @@ def _parse_champion_run_id(champion_path: Path) -> str | None:
     except OSError:
         return None
     for line in lines:
-        m = re.search(r"\brun_\d+\b", line)
+        m = re.search(r"\brun_\d\w*\b", line, re.ASCII)
         if m:
             return m.group()
     return None
