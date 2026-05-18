@@ -120,6 +120,8 @@ def test_harness_kwargs_none_default_no_extra_kwargs(monkeypatch):
     assert "bootstrap_n_resamples" not in captured
     assert "data" in captured
     assert "feature_cols" in captured
+    assert "sample_frac" not in captured
+    assert "sample_seed" not in captured
 
 
 def test_harness_kwargs_empty_dict_treated_as_none(monkeypatch):
@@ -166,4 +168,106 @@ def test_harness_kwargs_unknown_kwarg_propagates_as_error(monkeypatch):
             outcome_variable="y",
             model_cfg=_MINIMAL_MODEL_CFG,
             harness_kwargs={"nonexistent_arg": 1},
+        )
+
+
+def test_sample_frac_forwarded_to_harness(monkeypatch):
+    captured: dict = {}
+    _patch_project_modules(monkeypatch, _make_fake_harness(captured))
+
+    with pytest.raises(RuntimeError, match="captured-and-stop"):
+        run_record(
+            metadata=_MINIMAL_METADATA,
+            data=_MINIMAL_DF,
+            feature_cols=[],
+            outcome_variable="y",
+            model_cfg=_MINIMAL_MODEL_CFG,
+            sample_frac=0.1,
+            sample_seed=42,
+        )
+
+    assert captured.get("sample_frac") == 0.1
+    assert captured.get("sample_seed") == 42
+
+
+def test_sample_frac_alone_no_seed_omits_seed_kwarg(monkeypatch):
+    captured: dict = {}
+    _patch_project_modules(monkeypatch, _make_fake_harness(captured))
+
+    with pytest.raises(RuntimeError, match="captured-and-stop"):
+        run_record(
+            metadata=_MINIMAL_METADATA,
+            data=_MINIMAL_DF,
+            feature_cols=[],
+            outcome_variable="y",
+            model_cfg=_MINIMAL_MODEL_CFG,
+            sample_frac=0.1,
+            sample_seed=None,
+        )
+
+    assert captured.get("sample_frac") == 0.1
+    assert "sample_seed" not in captured
+
+
+def test_sample_seed_alone_no_frac_omits_frac_kwarg(monkeypatch):
+    captured: dict = {}
+    _patch_project_modules(monkeypatch, _make_fake_harness(captured))
+
+    with pytest.raises(RuntimeError, match="captured-and-stop"):
+        run_record(
+            metadata=_MINIMAL_METADATA,
+            data=_MINIMAL_DF,
+            feature_cols=[],
+            outcome_variable="y",
+            model_cfg=_MINIMAL_MODEL_CFG,
+            sample_frac=None,
+            sample_seed=42,
+        )
+
+    assert "sample_frac" not in captured
+    assert captured.get("sample_seed") == 42
+
+
+@pytest.mark.parametrize(
+    "collision_key",
+    ["sample_frac", "sample_seed"],
+)
+def test_sample_frac_collision_with_harness_kwargs_raises(collision_key):
+    with pytest.raises(ValueError, match="reserved"):
+        run_record(
+            metadata=_MINIMAL_METADATA,
+            data=_MINIMAL_DF,
+            feature_cols=[],
+            outcome_variable="y",
+            model_cfg=_MINIMAL_MODEL_CFG,
+            sample_frac=0.1,
+            harness_kwargs={collision_key: 0.2},
+        )
+
+
+def test_sample_seed_none_safe_for_harness_without_sample_seed(monkeypatch):
+    # Regression: california_housing_demo's harness lacks sample_seed in its
+    # signature. Unconditional sample_seed=None forwarding broke it with
+    # TypeError. Conditional forwarding must reach harness without sample_seed.
+    def strict_harness(
+        *,
+        data,
+        feature_cols,
+        outcome_variable,
+        ml_model_config,
+        sample_frac=None,
+        predictions_dir=None,
+    ):
+        raise RuntimeError("reached-harness")
+
+    _patch_project_modules(monkeypatch, strict_harness)
+
+    with pytest.raises(RuntimeError, match="reached-harness"):
+        run_record(
+            metadata=_MINIMAL_METADATA,
+            data=_MINIMAL_DF,
+            feature_cols=[],
+            outcome_variable="y",
+            model_cfg=_MINIMAL_MODEL_CFG,
+            sample_seed=None,
         )

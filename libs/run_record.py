@@ -173,6 +173,8 @@ def run_record(
     feature_cols: list[str],
     outcome_variable: str,
     model_cfg: dict[str, Any],
+    sample_frac: float | None = None,
+    sample_seed: int | None = None,
     harness_kwargs: dict[str, Any] | None = None,
     eda_config: EDAConfig | None = None,
     discovery_config: DiscoveryConfig | None = None,
@@ -234,15 +236,22 @@ def run_record(
         predictions_dir = artifacts_dir
         predictions_dir.mkdir(parents=True, exist_ok=True)
 
+    # Build inner kwargs explicitly; omit sampling kwargs when None to preserve
+    # compatibility with project harnesses that do not accept sample_seed.
+    inner_harness_kwargs = {**extra_harness_kwargs}
+    if sample_frac is not None:
+        inner_harness_kwargs["sample_frac"] = sample_frac
+    if sample_seed is not None:
+        inner_harness_kwargs["sample_seed"] = sample_seed
+
     try:
         harness_response = harness_mod.harness(
             data=data,
             feature_cols=feature_cols,
             outcome_variable=outcome_variable,
             ml_model_config=model_cfg,
-            sample_frac=None,
             predictions_dir=str(predictions_dir) if predictions_dir is not None else None,
-            **extra_harness_kwargs,
+            **inner_harness_kwargs,
         )
     except Exception as e:
         _write_failure_shell_rows(metadata, "failed_harness", f"Harness failed: {e}", resolved_root)
