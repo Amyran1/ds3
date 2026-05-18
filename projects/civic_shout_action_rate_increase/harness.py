@@ -25,6 +25,9 @@ from sklearn.preprocessing import StandardScaler
 _SKLEARN_HAS_NEWTON_CHOLESKY = tuple(map(int, sklearn.__version__.split(".")[:2])) >= (1, 4)
 
 from libs.perf_equivalence import compute_predictions_hash
+from libs.responses import HarnessResponse as _LibsHarnessResponse
+from libs.responses import RunResultMetadata as _LibsRunResultMetadata
+from libs.responses import RunResultRow as _LibsRunResultRow
 from projects.civic_shout_action_rate_increase.harness_cache import (
     HarnessCache,
     confound_data_fingerprint,
@@ -270,62 +273,66 @@ class ML_Model_Config(BaseModel):
     column_mapping: dict[str, str] = Field(default_factory=dict)
 
 
-class RunResultMetadata(BaseModel):
-    run_id: str
-    project: str
-    comparison_group: str
-    scope: Literal[
+class RunResultMetadata(_LibsRunResultMetadata):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    scope: Literal[  # type: ignore[assignment]
         "smoke", "reproduction", "comparison", "champion_candidate", "fast_iter", "comparison_fast"
     ]
     status: str = "completed"
-    verdict: str | None = None
-    recorded_at_utc: Any = None
-    git_sha: str | None = None
+    verdict: str | None = None  # type: ignore[assignment]
+    recorded_at_utc: Any = None  # type: ignore[assignment]
+    git_sha: str | None = None  # type: ignore[assignment]
     data_fingerprint: str | None = None
+    outcome_version: str = "v1"
+    notes: str = ""
 
 
-class RunResultRow(BaseModel):
-    model_config = ConfigDict(extra="allow")
+class RunResultRow(_LibsRunResultRow):
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
 
-    run_id: str
-    project: str
-    comparison_group: str
-    scope: str
-    status: str
-    verdict: str | None = None
-    recorded_at_utc: Any = None
-    git_sha: str | None = None
-    data_fingerprint: str | None = None
-    outcome_variable: str
-    primary_metric_name: str
-    primary_metric_value: float
+    # Shadow libs required fields with project-compatible defaults / wider types
+    verdict: str | None = None  # type: ignore[assignment]
+    recorded_at_utc: Any = None  # type: ignore[assignment]
+    git_sha: str | None = None  # type: ignore[assignment]
+    outcome_version: str = "v1"
+    primary_metric_value: float | None = None  # type: ignore[assignment]
     baseline_metric_value: float | None = None
     lift_vs_baseline: float | None = None
+    metric_direction: str = "higher_is_better"
+    sample_frac: float | None = None  # type: ignore[assignment]
+    n_features: int = 0
+    total_seconds: float = 0.0
+    cpu_utilization_pct: float | None = None
+    fingerprint: str = ""
+    notes: str = ""
+    # Project-specific fields
+    data_fingerprint: str | None = None
+    outcome_variable: str = ""
     ci_low: float | None = None
     ci_high: float | None = None
-    n_rows: int
-    sample_frac: float | None = None
-    is_full_run: bool
-    elapsed_seconds: float
-    model_type: str
-    n_feature_cols: int
-    feature_cols: list[str]
-    cpu_utilization_pct: float | None = None
+    elapsed_seconds: float = 0.0
+    model_type: str = ""
+    n_feature_cols: int = 0
+    feature_cols: list[str] = Field(default_factory=list)
 
 
-class HarnessResponse(BaseModel):
-    summary: HarnessSummary
+class HarnessResponse(_LibsHarnessResponse):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    summary: HarnessSummary  # type: ignore[assignment]
     method: HarnessMethod
-    data: HarnessDataProfile
+    data: HarnessDataProfile  # type: ignore[assignment]
+    data_profile: None = None  # type: ignore[assignment]  # shadows libs required field; project uses `data`
     metrics: HarnessMetrics
-    performance: HarnessPerformance
+    performance: HarnessPerformance  # type: ignore[assignment]
     diagnostics: list[HarnessDiagnostic] = Field(default_factory=list)
-    artifacts: list[HarnessArtifact] = Field(default_factory=list)
+    artifacts: list[HarnessArtifact] = Field(default_factory=list)  # type: ignore[assignment]
     reproducibility: HarnessReproducibility
     model_interpretability: dict[str, Any] | None = None
     fingerprint: str = ""
 
-    def to_result_row(self, run_metadata: RunResultMetadata) -> RunResultRow:
+    def to_result_row(self, run_metadata: _LibsRunResultMetadata) -> RunResultRow:
         return RunResultRow(
             run_id=run_metadata.run_id,
             project=run_metadata.project,
@@ -335,18 +342,24 @@ class HarnessResponse(BaseModel):
             verdict=run_metadata.verdict,
             recorded_at_utc=run_metadata.recorded_at_utc,
             git_sha=run_metadata.git_sha,
+            outcome_version=run_metadata.outcome_version,
+            notes=run_metadata.notes,
             data_fingerprint=run_metadata.data_fingerprint or self.reproducibility.data_fingerprint,
             outcome_variable=self.data.outcome_variable,
             primary_metric_name=self.summary.primary_metric_name,
             primary_metric_value=self.summary.primary_metric_value,
             baseline_metric_value=self.summary.baseline_metric_value,
             lift_vs_baseline=self.summary.lift_vs_baseline,
+            metric_direction=self.method.metric_direction,
             ci_low=self.metrics.primary.ci_low,
             ci_high=self.metrics.primary.ci_high,
             n_rows=self.data.n_rows,
-            sample_frac=self.data.sample_frac,
+            n_features=self.data.n_features,
+            sample_frac=self.data.sample_frac if self.data.sample_frac is not None else 1.0,
             is_full_run=self.data.is_full_run,
+            total_seconds=self.performance.total_seconds,
             elapsed_seconds=self.performance.total_seconds,
+            fingerprint=self.fingerprint,
             model_type=self.reproducibility.ml_model_type,
             n_feature_cols=self.data.n_features,
             feature_cols=self.data.feature_cols,
@@ -410,7 +423,7 @@ class CivicShoutResultRow(RunResultRow):
 
 
 class CivicShoutHarnessResponse(HarnessResponse):
-    def to_result_row(self, run_metadata: RunResultMetadata) -> CivicShoutResultRow:
+    def to_result_row(self, run_metadata: _LibsRunResultMetadata) -> CivicShoutResultRow:
         base = super().to_result_row(run_metadata).model_dump()
         sec = {m.name: m.value for m in self.metrics.secondary}
         diag = {d.name: d for d in self.diagnostics}
