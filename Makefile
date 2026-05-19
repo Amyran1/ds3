@@ -5,6 +5,10 @@
 #   make autoloop-once PROJECT=civic_shout_action_rate_increase
 #   make autoloop PORT=9000
 
+# agent-tooling-overlay: worktree targets (auto-managed; do not edit)
+-include .claude/make/worktree.mk
+# end agent-tooling-overlay worktree
+
 PROJECT ?= california_housing_demo
 PORT    ?= 8765
 
