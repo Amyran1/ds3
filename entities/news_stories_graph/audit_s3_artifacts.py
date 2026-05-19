@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, cast
 import boto3
 from botocore.exceptions import ClientError
 
+from libs.s3_bucket import default_bucket
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -31,7 +33,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_BUCKET = "chorus-content-assets"
 _ENTITY_PREFIX = (
     "autonomous-data-scientist/civic_shout_news_environment/entities/news_stories_graph"
 )
@@ -109,7 +110,7 @@ def _write_report(
         "# news_stories_graph v1 — S3 Artifact Audit",
         "",
         f"Run at: {datetime.now(UTC).isoformat()}",
-        f"Bucket: `{_BUCKET}`",
+        f"Bucket: `{default_bucket()}`",
         f"Prefix: `{_ENTITY_PREFIX}/`",
         "",
         f"- all_present: **{all_present}**",
@@ -147,7 +148,7 @@ def main() -> int:
 
     for rel_key, (lo, hi) in EXPECTED_KEYS:
         full_key = f"{_ENTITY_PREFIX}/{rel_key}"
-        size, lm, err = _head_object(s3, _BUCKET, full_key)
+        size, lm, err = _head_object(s3, default_bucket(), full_key)
         present = err is None and size is not None
         in_band = present and size is not None and lo <= size <= hi
         if not present:
@@ -190,7 +191,7 @@ def main() -> int:
         "version": 1,
         "built_at": datetime.now(UTC).isoformat(),
         "entity": "civic_shout_news_environment/news_stories_graph",
-        "bucket": _BUCKET,
+        "bucket": default_bucket(),
         "prefix": _ENTITY_PREFIX,
         "total_bytes": total_bytes,
         "n_artifacts": len(EXPECTED_KEYS),
@@ -206,12 +207,12 @@ def main() -> int:
     # Upload to S3
     try:
         s3.put_object(  # type: ignore[attr-defined]
-            Bucket=_BUCKET,
+            Bucket=default_bucket(),
             Key=_MANIFEST_S3_KEY,
             Body=_MANIFEST_LOCAL.read_bytes(),
             ContentType="application/json",
         )
-        logger.info("Uploaded manifest to s3://%s/%s", _BUCKET, _MANIFEST_S3_KEY)
+        logger.info("Uploaded manifest to s3://%s/%s", default_bucket(), _MANIFEST_S3_KEY)
     except ClientError:
         logger.exception("Failed to upload manifest")
         return 2

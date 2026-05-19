@@ -23,6 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from libs.cache import s3
+from libs.s3_bucket import default_bucket
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,6 @@ _S3_PREFIX = (
     "autonomous-data-scientist/civic_shout_news_environment/entities"
     "/news_stories_graph/dense_embeddings"
 )
-_BUCKET = "chorus-content-assets"
 
 
 class DenseEmbeddingsCache:
@@ -46,7 +46,7 @@ class DenseEmbeddingsCache:
             logger.debug("Cache hit: dense embeddings v%d", version)
             return np.load(local_path)
         logger.info("Cache miss: downloading dense embeddings v%d from S3", version)
-        s3.download(_BUCKET, self._s3_key(version), local_path)
+        s3.download(default_bucket(), self._s3_key(version), local_path)
         return np.load(local_path)
 
     def get_story_ids(self, version: int = 1) -> list[str]:
@@ -54,7 +54,7 @@ class DenseEmbeddingsCache:
         local_path = self._ids_local_path(version)
         if not local_path.exists():
             logger.info("Cache miss: downloading story_ids v%d from S3", version)
-            s3.download(_BUCKET, self._ids_s3_key(version), local_path)
+            s3.download(default_bucket(), self._ids_s3_key(version), local_path)
         return [str(sid) for sid in json.loads(local_path.read_text())]
 
     def put(
@@ -74,11 +74,11 @@ class DenseEmbeddingsCache:
         local_path = self._local_path(version)
         local_path.parent.mkdir(parents=True, exist_ok=True)
         np.save(local_path, arr)
-        s3.upload(local_path, _BUCKET, self._s3_key(version))
+        s3.upload(local_path, default_bucket(), self._s3_key(version))
 
         ids_path = self._ids_local_path(version)
         ids_path.write_text(json.dumps(story_ids))
-        s3.upload(ids_path, _BUCKET, self._ids_s3_key(version))
+        s3.upload(ids_path, default_bucket(), self._ids_s3_key(version))
 
         logger.info(
             "Saved dense_embeddings v%d (%s) + %d ids locally and to S3",

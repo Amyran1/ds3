@@ -53,7 +53,7 @@ from entities.civic_shout_engagement.aggregate_emails_cache import (
     cache as aggregate_emails_cache,
 )
 from libs.cache import s3
-from libs.cache.entity_cache import DEFAULT_BUCKET
+from libs.s3_bucket import default_bucket
 from libs.clients.openai import OpenAIClient
 from libs.settings import Settings
 
@@ -453,15 +453,15 @@ def main(*, dry_run: bool = False, limit: int | None = None) -> None:
     idx_map_path = _V2_ARTIFACTS_DIR / "idx_map.json"
     _dump_bm25_encoder_and_idx_map(bm25_enc, idx_map, bm25_encoder_path, idx_map_path)
 
-    s3.upload(tfidf_path, DEFAULT_BUCKET, f"{_S3_ARTIFACTS_PREFIX}/tfidf_vocab.json")
-    s3.upload(bm25_path, DEFAULT_BUCKET, f"{_S3_ARTIFACTS_PREFIX}/bm25_params.json")
+    s3.upload(tfidf_path, default_bucket(), f"{_S3_ARTIFACTS_PREFIX}/tfidf_vocab.json")
+    s3.upload(bm25_path, default_bucket(), f"{_S3_ARTIFACTS_PREFIX}/bm25_params.json")
     # DS bucket copies (symmetry with other sidecars)
     s3.upload(
         bm25_encoder_path,
-        DEFAULT_BUCKET,
+        default_bucket(),
         f"{_S3_ARTIFACTS_PREFIX}/bm25_encoder.json",
     )
-    s3.upload(idx_map_path, DEFAULT_BUCKET, f"{_S3_ARTIFACTS_PREFIX}/idx_map.json")
+    s3.upload(idx_map_path, default_bucket(), f"{_S3_ARTIFACTS_PREFIX}/idx_map.json")
     # Backend bucket — consumed by content_routing vectorize_emails cron
     s3.upload(
         bm25_encoder_path,

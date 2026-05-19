@@ -50,9 +50,7 @@ from typing import TYPE_CHECKING, cast
 from scipy.sparse import csr_matrix, load_npz, save_npz
 
 from libs.cache import s3
-
-if TYPE_CHECKING:
-    from pinecone_text.sparse import BM25Encoder
+from libs.s3_bucket import default_bucket
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +61,6 @@ _S3_PREFIX = (
     "autonomous-data-scientist/civic_shout_news_environment/entities"
     "/news_stories_graph/bm25_vectors"
 )
-_BUCKET = "chorus-content-assets"
 
 _REQUIRED_PARAM_KEYS: frozenset[str] = frozenset(
     {"encoder_class", "k1", "b", "n_docs", "n_cols", "nnz"},
@@ -78,7 +75,7 @@ class Bm25VectorsCache:
         local_path = self._matrix_local_path(version)
         if not local_path.exists():
             logger.info("Cache miss: downloading bm25 v%d from S3", version)
-            s3.download(_BUCKET, self._matrix_s3_key(version), local_path)
+            s3.download(default_bucket(), self._matrix_s3_key(version), local_path)
         else:
             logger.debug("Cache hit: bm25 v%d", version)
         matrix = load_npz(local_path)
@@ -92,7 +89,7 @@ class Bm25VectorsCache:
                 "Cache miss: downloading bm25 params v%d from S3",
                 version,
             )
-            s3.download(_BUCKET, self._params_s3_key(version), local_path)
+            s3.download(default_bucket(), self._params_s3_key(version), local_path)
         return cast("dict[str, object]", json.loads(local_path.read_text()))
 
     def get_story_ids(self, version: int = 1) -> list[str]:
@@ -103,7 +100,7 @@ class Bm25VectorsCache:
                 "Cache miss: downloading bm25 story_ids v%d from S3",
                 version,
             )
-            s3.download(_BUCKET, self._ids_s3_key(version), local_path)
+            s3.download(default_bucket(), self._ids_s3_key(version), local_path)
         return [str(sid) for sid in json.loads(local_path.read_text())]
 
     def get_encoder(self, version: int = 2) -> BM25Encoder:
@@ -121,7 +118,7 @@ class Bm25VectorsCache:
                 "Cache miss: downloading bm25 encoder v%d from S3",
                 version,
             )
-            s3.download(_BUCKET, self._encoder_s3_key(version), local_path)
+            s3.download(default_bucket(), self._encoder_s3_key(version), local_path)
         logger.info("Loading BM25Encoder pickle v%d", version)
         encoder = pickle.loads(local_path.read_bytes())  # noqa: S301
         return cast("BM25Encoder", encoder)
@@ -140,7 +137,7 @@ class Bm25VectorsCache:
                 "Cache miss: downloading bm25 idx_map v%d from S3",
                 version,
             )
-            s3.download(_BUCKET, self._idx_map_s3_key(version), local_path)
+            s3.download(default_bucket(), self._idx_map_s3_key(version), local_path)
         raw: dict[str, int] = json.loads(local_path.read_text())
         return {int(k): v for k, v in raw.items()}
 
@@ -176,15 +173,15 @@ class Bm25VectorsCache:
         matrix_path = self._matrix_local_path(version)
         matrix_path.parent.mkdir(parents=True, exist_ok=True)
         save_npz(matrix_path, matrix)
-        s3.upload(matrix_path, _BUCKET, self._matrix_s3_key(version))
+        s3.upload(matrix_path, default_bucket(), self._matrix_s3_key(version))
 
         params_path = self._params_local_path(version)
         params_path.write_text(json.dumps(params))
-        s3.upload(params_path, _BUCKET, self._params_s3_key(version))
+        s3.upload(params_path, default_bucket(), self._params_s3_key(version))
 
         ids_path = self._ids_local_path(version)
         ids_path.write_text(json.dumps(story_ids))
-        s3.upload(ids_path, _BUCKET, self._ids_s3_key(version))
+        s3.upload(ids_path, default_bucket(), self._ids_s3_key(version))
 
         if encoder is not None:
             encoder_path = self._encoder_local_path(version)
@@ -195,7 +192,7 @@ class Bm25VectorsCache:
                 version,
                 len(encoder_bytes) / 1_048_576,
             )
-            s3.upload(encoder_path, _BUCKET, self._encoder_s3_key(version))
+            s3.upload(encoder_path, default_bucket(), self._encoder_s3_key(version))
 
         if idx_map is not None:
             idx_map_path = self._idx_map_local_path(version)
@@ -203,7 +200,7 @@ class Bm25VectorsCache:
             idx_map_path.write_text(
                 json.dumps({str(k): v for k, v in idx_map.items()}),
             )
-            s3.upload(idx_map_path, _BUCKET, self._idx_map_s3_key(version))
+            s3.upload(idx_map_path, default_bucket(), self._idx_map_s3_key(version))
 
         logger.info(
             "Saved bm25_vectors v%d (%d x %d, %d nnz) + params + %d ids%s%s",

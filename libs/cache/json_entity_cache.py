@@ -10,7 +10,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from libs.cache import s3
-from libs.cache.entity_cache import DEFAULT_BUCKET, VersionMeta
+from libs.cache.entity_cache import VersionMeta
+from libs.s3_bucket import default_bucket
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +25,13 @@ class JsonEntityCache:
         s3_prefix: str,
         cache_dir: Path,
         versions: dict[int, VersionMeta],
-        bucket: str = DEFAULT_BUCKET,
+        bucket: str | None = None,
     ) -> None:
         self.entity = entity
         self.s3_prefix = s3_prefix
         self.cache_dir = cache_dir
         self.versions = versions
-        self.bucket = bucket
+        self.bucket = bucket if bucket is not None else default_bucket()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _resolve(self, version: int) -> VersionMeta:

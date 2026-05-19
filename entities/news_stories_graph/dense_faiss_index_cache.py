@@ -33,9 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from libs.cache import s3
-
-if TYPE_CHECKING:
-    import faiss
+from libs.s3_bucket import default_bucket
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +44,6 @@ _S3_PREFIX = (
     "autonomous-data-scientist/civic_shout_news_environment/entities"
     "/news_stories_graph/dense_faiss_index"
 )
-_BUCKET = "chorus-content-assets"
 
 
 class DenseFaissIndexCache:
@@ -62,7 +59,7 @@ class DenseFaissIndexCache:
                 "Cache miss: downloading dense faiss index v%d from S3",
                 version,
             )
-            s3.download(_BUCKET, self._s3_key(version), local_path)
+            s3.download(default_bucket(), self._s3_key(version), local_path)
         else:
             logger.debug("Cache hit: dense faiss index v%d", version)
         # faiss Python stubs are incomplete; read_index returns Any.
@@ -75,7 +72,7 @@ class DenseFaissIndexCache:
         local_path = self.local_path(version)
         local_path.parent.mkdir(parents=True, exist_ok=True)
         cast("Any", _faiss).write_index(index, str(local_path))
-        s3.upload(local_path, _BUCKET, self._s3_key(version))
+        s3.upload(local_path, default_bucket(), self._s3_key(version))
 
         logger.info("Saved dense_faiss_index v%d locally and to S3", version)
 

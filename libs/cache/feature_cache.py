@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 import polars as pl
 
 from libs.cache import s3
-from libs.cache.entity_cache import DEFAULT_BUCKET
+from libs.s3_bucket import default_bucket
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -48,12 +48,12 @@ class FeatureCache:
         *,
         name: str,
         versions: dict[int, FeatureVersionMeta],
-        bucket: str = DEFAULT_BUCKET,
+        bucket: str | None = None,
         s3_client: S3Client = s3,
     ) -> None:
         self.name = name
         self.versions = versions
-        self.bucket = bucket
+        self.bucket = bucket if bucket is not None else default_bucket()
         self.s3_client = s3_client
 
     def path(self, version: int) -> Path:
