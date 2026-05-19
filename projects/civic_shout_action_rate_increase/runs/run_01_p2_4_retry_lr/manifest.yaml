@@ -1,0 +1,32 @@
+run_id: run_01_p2_4_retry_lr
+project: civic_shout_action_rate_increase
+comparison_group: action_rate_increase_temporal_holdout_residualized_auc_v1
+scope: comparison
+git_sha: b43745d
+recorded_at_utc: '2026-05-18T12:17:59.715074+00:00'
+outcome:
+  version: v1
+  name: actioned_24h_per_send
+features: {}
+data:
+  source_cache: civic_shout_user_emails
+  source_version: 3
+  n_rows: 1290194
+  fingerprint: 'null'
+model:
+  type: logistic_regression
+  args:
+    penalty: l2
+    C: 1.0
+    max_iter: 200
+    tol: 0.001
+    fit_intercept: true
+    class_weight: null
+    random_state: 42
+    solver: newton-cholesky
+sample:
+  frac: 0.01
+  seed: 42
+performance:
+  elapsed_seconds: 9.435708291945048
+  bottleneck_stage: data_conversion

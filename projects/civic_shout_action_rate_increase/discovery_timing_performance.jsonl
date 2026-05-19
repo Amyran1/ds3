@@ -1,0 +1,3 @@
+{"recorded_at_utc": "2026-05-18T13:33:24.921673+00:00", "total_seconds": 3.2018624170450494, "methods": {"residual_slice_tree": {"n_findings": 5, "seconds": 3.1931099160574377}, "label_noise_scan": {"n_findings": 100, "seconds": 0.003231458947993815}}}
+{"recorded_at_utc": "2026-05-18T13:47:49.743496+00:00", "total_seconds": 3.084208915941417, "methods": {"residual_slice_tree": {"n_findings": 5, "seconds": 3.074674583040178}, "label_noise_scan": {"n_findings": 100, "seconds": 0.0035594169748947024}}}
+{"recorded_at_utc": "2026-05-18T13:49:27.908683+00:00", "total_seconds": 3.059682375052944, "methods": {"residual_slice_tree": {"n_findings": 5, "seconds": 3.0542386249871925}, "label_noise_scan": {"n_findings": 100, "seconds": 0.002226417069323361}}}

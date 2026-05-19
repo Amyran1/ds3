@@ -1,9 +1,9 @@
-run_id: run_01
+run_id: run_01_p2_4_retry_lgbm
 project: civic_shout_action_rate_increase
 comparison_group: action_rate_increase_temporal_holdout_residualized_auc_v1
-scope: smoke
-git_sha: fdc84f3
-recorded_at_utc: '2026-05-18T14:21:46.514185+00:00'
+scope: comparison
+git_sha: b43745d
+recorded_at_utc: '2026-05-18T12:17:23.320085+00:00'
 outcome:
   version: v1
   name: actioned_24h_per_send
@@ -34,5 +34,5 @@ sample:
   frac: 0.01
   seed: 42
 performance:
-  elapsed_seconds: 17.69179308391176
+  elapsed_seconds: 17.7183710829122
   bottleneck_stage: bootstrap_ci

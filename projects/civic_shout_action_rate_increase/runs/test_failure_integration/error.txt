@@ -1,0 +1,14 @@
+Exception type: ValueError
+Exception message: run_id must match 'run_N+' pattern, got 'test_failure_integration'
+
+Traceback:
+Traceback (most recent call last):
+  File "/Users/aaronmyran/dev/ds3/projects/civic_shout_action_rate_increase/runs/run_01.py", line 618, in main
+    out = run_record(
+        metadata=metadata,
+    ...<9 lines>...
+        project_root=project_root,
+    )
+  File "/Users/aaronmyran/dev/ds3/libs/run_record.py", line 189, in run_record
+    raise ValueError(f"run_id must match 'run_N+' pattern, got {metadata.run_id!r}")
+ValueError: run_id must match 'run_N+' pattern, got 'test_failure_integration'
